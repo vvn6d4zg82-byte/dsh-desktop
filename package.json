@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "description": "DeepSeek Harness 桌面端 — 轻量包装 DSH Web GUI",
   "main": "src/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vvn6d4zg82-byte/dsh-desktop.git"
+  },
   "author": "DSH",
   "license": "MIT",
   "scripts": {
