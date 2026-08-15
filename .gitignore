@@ -1,0 +1,15 @@
+# dependencies / build artifacts
+node_modules/
+dist/
+.npm-cache/
+
+# logs
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/

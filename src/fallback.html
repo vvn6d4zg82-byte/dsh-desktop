@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'unsafe-inline'"
+    />
+    <title>DSH Desktop — 未连接</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(1200px 600px at 50% -10%, #1e293b 0%, #0f172a 55%, #020617 100%);
+        color: #e2e8f0;
+        font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      }
+      .card {
+        max-width: 520px;
+        padding: 48px 40px;
+        text-align: center;
+        background: rgba(30, 41, 59, 0.55);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 16px;
+        backdrop-filter: blur(6px);
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+      }
+      .logo {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 20px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 34px;
+        font-weight: 700;
+        color: #fff;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+      }
+      p {
+        margin: 8px 0;
+        color: #94a3b8;
+        line-height: 1.7;
+      }
+      code {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: rgba(148, 163, 184, 0.15);
+        color: #cbd5e1;
+        font-size: 13px;
+      }
+      .url {
+        margin: 16px 0;
+        font-size: 14px;
+        color: #60a5fa;
+        word-break: break-all;
+      }
+      button {
+        margin-top: 20px;
+        padding: 10px 28px;
+        font-size: 15px;
+        color: #fff;
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      button:hover {
+        filter: brightness(1.1);
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      .hint {
+        font-size: 13px;
+        color: #64748b;
+        margin-top: 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="logo">D</div>
+      <h1>无法连接到 DSH 服务</h1>
+      <p>
+        桌面端会每 3 秒自动检测一次，服务启动后会自动进入。<br />
+        当前服务地址：
+      </p>
+      <div class="url" id="url">…</div>
+      <p>
+        如果 DSH 还没启动，请先在终端运行<br />
+        <code>dsh web</code>
+        （或启动 DeepSeek Harness 的 Web 服务）。
+      </p>
+      <button id="retry">立即重试</button>
+      <div class="hint" id="status">正在检测…</div>
+    </div>
+    <script>
+      const urlEl = document.getElementById('url');
+      const btn = document.getElementById('retry');
+      const statusEl = document.getElementById('status');
+
+      urlEl.textContent = window.dshDesktop.serverUrl;
+
+      btn.addEventListener('click', () => {
+        btn.disabled = true;
+        statusEl.textContent = '正在重试…';
+        window.dshDesktop.retry();
+        setTimeout(() => (btn.disabled = false), 1500);
+      });
+    </script>
+  </body>
+</html>
