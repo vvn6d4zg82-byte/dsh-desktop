@@ -7,4 +7,5 @@ contextBridge.exposeInMainWorld('dshDesktop', {
   retry: () => ipcRenderer.send('retry'),
   startServer: () => ipcRenderer.send('start-server'),
   onServerStatus: (cb) => ipcRenderer.on('server-status', (_event, status) => cb(status)),
+  onServerLog: (cb) => ipcRenderer.on('server-log', (_event, line) => cb(line)),
 });

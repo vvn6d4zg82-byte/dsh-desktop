@@ -4,7 +4,7 @@ const { app, BrowserWindow, Menu, ipcMain, shell, session, dialog } = require('e
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 // ---------------------------------------------------------------------------
 // 解析 DSH 服务地址：命令行 --url= 优先，其次环境变量 DSH_WEB_URL，最后默认值
@@ -35,11 +35,13 @@ if (!app.isPackaged) {
 // 设置持久化（userData/settings.json）
 // ---------------------------------------------------------------------------
 const DEFAULT_SETTINGS = {
+  settingsVersion: 2, // 设置结构版本：>=2 表示 v0.1.4+（开机自启默认开启）
   serverCommand: 'npx --yes @deepseek-ai/dsh web', // 拉起 DSH 服务（--yes 免 npx 交互提示，配合 windowsHide 全静默）
   autoStartServer: true, // DSH 服务未运行时是否自动拉起
-  openAtLogin: false, // 是否开机自启（同时写 Windows 登录项）
+  openAtLogin: true, // 开机自启（默认开启，安装版首次运行即注册 Windows 登录项）
   systemCerts: true, // 给拉起的服务注入 --use-system-ca（内网/代理证书环境需要）
   onboardingDone: false, // 首次启动引导是否已完成
+  hideTerminal: true, // 隐藏 DSH 网页里的终端界面（data-terminal 块）
 };
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -50,8 +52,15 @@ function settingsPath() {
 
 function loadSettings() {
   try {
-    const raw = fs.readFileSync(settingsPath(), 'utf8');
-    settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const raw = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
+    const needsMigration = !raw.settingsVersion || raw.settingsVersion < 2;
+    settings = { ...DEFAULT_SETTINGS, ...raw };
+    if (needsMigration) {
+      // v0.1.4 起开机自启改为默认开启：旧版设置里显式存过 false，这里强制迁移一次
+      settings.openAtLogin = true;
+      settings.settingsVersion = 2;
+      saveSettings();
+    }
   } catch {
     /* 首次启动没有设置文件，用默认值 */
   }
@@ -90,16 +99,27 @@ function checkServer(timeoutMs = 1500) {
 // ---------------------------------------------------------------------------
 // 拉起 DSH 服务：服务没跑时自动 spawn 一次（默认 `npx @deepseek-ai/dsh web`）
 // 借鉴 opencode 桌面端的 sidecar 思路：启动就绪等待 + 超时看门狗 + 环回免代理 + 系统证书
+// 提速：优先直接调用 npx 缓存里的 dsh 入口（跳过 npx 的 ~4s 解析开销）
 // ---------------------------------------------------------------------------
-const SERVER_START_STALL_TIMEOUT = 120000; // 首启 npx 可能要下载包，给足 2 分钟
+const SERVER_START_STALL_TIMEOUT = 180000; // 首次全新下载可能很慢，给足 3 分钟
 let serverChild = null;
 let serverStarting = false;
 let serverStallTimer = null;
 let lastSpawnAttempt = 0;
+let lastLogSentAt = 0;
 
 function notifyFallback(status) {
   if (win && !win.isDestroyed() && !win.webContents.isLoadingMainFrame()) {
     win.webContents.send('server-status', status);
+  }
+}
+
+function notifyServerLog(line) {
+  const now = Date.now();
+  if (now - lastLogSentAt < 250) return; // 限流
+  lastLogSentAt = now;
+  if (win && !win.isDestroyed() && !win.webContents.isLoadingMainFrame()) {
+    win.webContents.send('server-log', String(line).trim().slice(0, 160));
   }
 }
 
@@ -109,6 +129,116 @@ function effectiveServerCommand() {
     settings.serverCommand ||
     DEFAULT_SETTINGS.serverCommand
   ).trim();
+}
+
+// 扫描 npx 缓存目录，找到已安装的 dsh 的 JS 入口（直接交给 node 运行，跳过 cmd/batch/npx 的 ~4s 解析）
+function findCachedDsh() {
+  let best = null;
+  const roots = [
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'npm-cache', '_npx') : null,
+    path.join(app.getPath('appData'), 'npm-cache', '_npx'),
+  ].filter(Boolean);
+  for (const root of roots) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const dir of entries) {
+      const pkgDir = path.join(root, dir, 'node_modules', '@deepseek-ai', 'dsh');
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+        const bin = pkg.bin;
+        let rel = null;
+        if (typeof bin === 'string') rel = bin;
+        else if (bin && typeof bin === 'object') rel = bin.dsh || Object.values(bin)[0];
+        if (rel) {
+          const cliJs = path.join(pkgDir, rel);
+          if (fs.existsSync(cliJs)) {
+            const mtime = fs.statSync(pkgDir).mtimeMs;
+            if (!best || mtime > best.mtime) best = { cliJs, mtime };
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return best ? best.cliJs : null;
+}
+
+let nodeExe = null;
+
+// 定位系统 node.exe：直接 spawn 它运行 JS 入口，避免 cmd 批处理二次进程弹窗/慢
+function findNodeExecutable() {
+  if (nodeExe) return nodeExe;
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+  const candidates = [
+    path.join(programFiles, 'nodejs', 'node.exe'),
+    process.env['ProgramFiles(x86)']
+      ? path.join(process.env['ProgramFiles(x86)'], 'nodejs', 'node.exe')
+      : null,
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return (nodeExe = c);
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    // 兜底：where node（同步、无窗口，失败一次才走这里，结果缓存）
+    const out = execFileSync('where.exe', ['node'], {
+      windowsHide: true,
+      encoding: 'utf8',
+      timeout: 3000,
+    });
+    const hit = out
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find((s) => s && /\.exe$/i.test(s));
+    if (hit) return (nodeExe = hit);
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+// 解析实际执行目标：
+// - 默认命令：优先「node + dsh JS 入口」直连（无 cmd、无窗口、快）；无缓存时退化为「node + npx-cli.js」
+// - 自定义命令：保持 cmd /c 兼容
+function resolveLaunchTarget() {
+  const configured = effectiveServerCommand();
+  const isDefault =
+    !process.env.DSH_DESKTOP_SERVER_CMD &&
+    (!settings.serverCommand || settings.serverCommand.trim() === DEFAULT_SETTINGS.serverCommand);
+  if (isDefault) {
+    const node = findNodeExecutable();
+    const cliJs = findCachedDsh();
+    if (node && cliJs) {
+      const display = `"${node}" "${cliJs}" web`;
+      return { type: 'direct', exec: node, args: [cliJs, 'web'], display };
+    }
+    if (node) {
+      const npxCli = path.join(path.dirname(node), 'node_modules', 'npm', 'bin', 'npx-cli.js');
+      if (fs.existsSync(npxCli)) {
+        const display = `"${node}" "${npxCli}" --yes @deepseek-ai/dsh web`;
+        return {
+          type: 'direct',
+          exec: node,
+          args: [npxCli, '--yes', '@deepseek-ai/dsh', 'web'],
+          display,
+        };
+      }
+    }
+  }
+  return {
+    type: 'shell',
+    exec: process.env.ComSpec || 'cmd.exe',
+    args: [configured],
+    display: configured,
+  };
 }
 
 // 给子进程注入环境：系统证书（opencode useSystemCertificates 的等价物）+ 环回地址免代理
@@ -151,26 +281,37 @@ function clearStallTimer() {
 
 function startDshServer() {
   if (serverStarting || serverChild) return false;
-  const cmd = effectiveServerCommand();
-  if (!cmd) return false;
+  const target = resolveLaunchTarget();
+  if (!target || !target.args.length) return false;
 
-  const parts = cmd.split(/\s+/);
-  const [exe, ...args] = parts;
   serverStarting = true;
   lastSpawnAttempt = Date.now();
   clearStallTimer();
   notifyFallback('starting');
 
   try {
-    // shell:true 才能解析 .cmd/.ps1（Windows）；detached 让服务在应用关闭后继续运行
-    serverChild = spawn(exe, args, {
-      shell: true,
-      windowsHide: true,
-      detached: true,
-      stdio: 'ignore',
-      env: createServerEnv(),
-    });
+    const stdio = ['ignore', 'pipe', 'pipe'];
+    if (target.type === 'direct') {
+      // node 直连 JS 入口：进程树里没有任何 cmd/batch，绝无控制台窗口，也没有 cmd+npx 的解析开销
+      serverChild = spawn(target.exec, target.args, {
+        windowsHide: true,
+        detached: false,
+        stdio,
+        env: createServerEnv(),
+      });
+    } else {
+      // 自定义命令：cmd /d /s /c 兼容（windowsHide 隐藏主 cmd 窗口）
+      serverChild = spawn(target.exec, ['/d', '/s', '/c', `"${target.args}"`], {
+        windowsHide: true,
+        detached: false,
+        stdio,
+        env: createServerEnv(),
+      });
+    }
     serverChild.unref();
+    // 把子进程输出转发到加载页（限流），首启/下载时能看到进度
+    serverChild.stdout.on('data', (chunk) => notifyServerLog(chunk.toString('utf8')));
+    serverChild.stderr.on('data', (chunk) => notifyServerLog(chunk.toString('utf8')));
 
     serverStallTimer = setTimeout(() => {
       // 启动卡死：杀掉进程树并报失败，交给轮询逻辑冷却后重试
@@ -251,6 +392,28 @@ async function loadServer() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 隐藏 DSH 网页里的终端界面（前端用 [data-terminal] 标记终端块）
+// ---------------------------------------------------------------------------
+let terminalCssKey = null;
+const TERMINAL_CSS = '[data-terminal]{display:none!important}';
+
+function applyTerminalCss(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  if (settings.hideTerminal) {
+    if (terminalCssKey) {
+      webContents.removeInsertedCSS(terminalCssKey).catch(() => {});
+      terminalCssKey = null;
+    }
+    webContents.insertCSS(TERMINAL_CSS).then((key) => {
+      terminalCssKey = key;
+    }).catch(() => {});
+  } else if (terminalCssKey) {
+    webContents.removeInsertedCSS(terminalCssKey).catch(() => {});
+    terminalCssKey = null;
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1360,
@@ -294,6 +457,11 @@ function createWindow() {
     }
   });
 
+  // 页面加载完成后注入「隐藏终端」样式（SPA 内动态出现的终端块也会命中该规则）
+  win.webContents.on('did-finish-load', () => {
+    applyTerminalCss(win.webContents);
+  });
+
   (async () => {
     if (await checkServer()) {
       loadServer();
@@ -316,7 +484,7 @@ function createWindow() {
 ipcMain.on('get-bootstrap', (event) => {
   event.returnValue = {
     serverUrl: serverUrl.toString(),
-    serverCommand: effectiveServerCommand(),
+    serverCommand: resolveLaunchTarget().display,
     serverStarting,
   };
 });
@@ -355,6 +523,46 @@ if (!gotLock) {
     }
   });
 
+// ---------------------------------------------------------------------------
+// 开机自启：直接写 HKCU Run 键（与系统其他自启应用同一机制，比 Electron 的
+// setLoginItemSettings 可靠——实测该 API 在本机不生效）
+// ---------------------------------------------------------------------------
+const LOGIN_ITEM_NAME = 'DSH Desktop';
+
+function setLoginItem(enabled) {
+  // 硬守卫：只有安装版（packaged）允许写注册表，开发模式一律跳过
+  if (!app.isPackaged) return false;
+  const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  try {
+    if (enabled) {
+      execFileSync('reg.exe', ['add', runKey, '/v', LOGIN_ITEM_NAME, '/t', 'REG_SZ', '/d', `"${process.execPath}"`, '/f'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+    } else {
+      execFileSync('reg.exe', ['delete', runKey, '/v', LOGIN_ITEM_NAME, '/f'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isLoginItemEnabled() {
+  try {
+    execFileSync('reg.exe', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', LOGIN_ITEM_NAME], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
   app.whenReady().then(() => {
     app.setName('DSH Desktop');
 
@@ -363,12 +571,17 @@ if (!gotLock) {
       session.defaultSession.getUserAgent().replace(/\sElectron\/\S+/, '')
     );
 
+    // 开机自启（默认开启）：安装版首次运行即写入 Windows 登录项
+    if (app.isPackaged && settings.openAtLogin) {
+      setLoginItem(true);
+    }
+
     const autoStartMenuItem = {
       label: '开机自动启动 DSH Desktop',
       type: 'checkbox',
-      checked: app.getLoginItemSettings().openAtLogin,
+      checked: isLoginItemEnabled(),
       click: (item) => {
-        app.setLoginItemSettings({ openAtLogin: item.checked, path: process.execPath });
+        setLoginItem(item.checked);
         settings.openAtLogin = item.checked;
         saveSettings();
       },
@@ -381,6 +594,17 @@ if (!gotLock) {
       click: (item) => {
         settings.autoStartServer = item.checked;
         saveSettings();
+      },
+    };
+
+    const hideTerminalMenuItem = {
+      label: '隐藏终端界面',
+      type: 'checkbox',
+      checked: settings.hideTerminal,
+      click: (item) => {
+        settings.hideTerminal = item.checked;
+        saveSettings();
+        if (win && !win.isDestroyed()) applyTerminalCss(win.webContents);
       },
     };
 
@@ -411,6 +635,8 @@ if (!gotLock) {
         {
           label: '视图',
           submenu: [
+            hideTerminalMenuItem,
+            { type: 'separator' },
             { role: 'resetZoom', label: '实际大小' },
             { role: 'zoomIn', label: '放大' },
             { role: 'zoomOut', label: '缩小' },
@@ -432,7 +658,7 @@ if (!gotLock) {
                   detail:
                     `DeepSeek Harness 桌面端\n\n` +
                     `连接服务: ${serverUrl.toString()}\n` +
-                    `启动命令: ${effectiveServerCommand()}\n` +
+                    `启动命令: ${resolveLaunchTarget().display}\n` +
                     `Electron ${process.versions.electron} / Chromium ${process.versions.chrome} / Node ${process.versions.node}`,
                 });
               },

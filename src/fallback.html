@@ -116,6 +116,19 @@
         color: #4f4f4f;
         font-family: Consolas, monospace;
       }
+      .log {
+        margin: 8px auto 0;
+        font-size: 11px;
+        color: #3c3c3c;
+        font-family: Consolas, monospace;
+        max-width: 420px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .log:empty {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -131,6 +144,7 @@
         <button id="retry">重试</button>
       </div>
       <div class="cmd" id="cmd"></div>
+      <div class="log" id="log"></div>
     </div>
     <script>
       const urlEl = document.getElementById('url');
@@ -139,6 +153,7 @@
       const statusTextEl = document.getElementById('statusText');
       const startBtn = document.getElementById('start');
       const retryBtn = document.getElementById('retry');
+      const logEl = document.getElementById('log');
 
       const b = window.dshDesktop.bootstrap;
       urlEl.textContent = b.serverUrl.replace(/^https?:\/\//, '');
@@ -159,6 +174,9 @@
 
       setStatus(b.serverStarting ? 'starting' : 'waiting');
       window.dshDesktop.onServerStatus((s) => setStatus(s));
+      window.dshDesktop.onServerLog((line) => {
+        if (line) logEl.textContent = line;
+      });
 
       startBtn.addEventListener('click', () => {
         startBtn.disabled = true;
