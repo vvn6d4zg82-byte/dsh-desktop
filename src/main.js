@@ -36,7 +36,7 @@ if (!app.isPackaged) {
 // ---------------------------------------------------------------------------
 const DEFAULT_SETTINGS = {
   settingsVersion: 2, // 设置结构版本：>=2 表示 v0.1.4+（开机自启默认开启）
-  serverCommand: 'npx --yes @deepseek-ai/dsh web', // 拉起 DSH 服务（--yes 免 npx 交互提示，配合 windowsHide 全静默）
+  serverCommand: 'npx --yes @deepseek-ai/dsh web --host 0.0.0.0', // 拉起 DSH 服务（--yes 免 npx 交互提示，配合 windowsHide 全静默）
   autoStartServer: true, // DSH 服务未运行时是否自动拉起
   openAtLogin: true, // 开机自启（默认开启，安装版首次运行即注册 Windows 登录项）
   systemCerts: true, // 给拉起的服务注入 --use-system-ca（内网/代理证书环境需要）
