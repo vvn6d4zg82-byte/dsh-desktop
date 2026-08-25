@@ -17,8 +17,8 @@
 ## 功能特性
 
 - 🪟 原生窗口加载 DSH Web GUI（自动读取 `DSH_WEB_URL` 环境变量，默认 `http://127.0.0.1:3080`）
-- ⚡ **服务未运行时自动拉起**：默认命令优先「node + dsh JS 入口」直连（跳过 cmd/批处理/npx，快 ~4s），
-  无缓存时退化为 node 直接跑 `npx-cli.js --yes @deepseek-ai/dsh web`（全静默、无终端窗口）
+- ⚡ **服务未运行时自动拉起**：安装版直接用 **Electron 自带 node**（`ELECTRON_RUN_AS_NODE`）跑内置 dsh，
+  零外部依赖、完全离线；开发模式用系统 node + dsh 直连（跳过 cmd/批处理/npx，快 ~4s）
 - 📺 **可隐藏 DSH 网页里的终端界面**：菜单「视图 → 隐藏终端界面」（默认开启），
   通过注入 `[data-terminal]{display:none}` 实现
 - ⏱️ 借鉴 opencode 桌面端：启动就绪等待 + 3 分钟超时看门狗 + 失败自动重试（15s 冷却）
@@ -33,9 +33,9 @@
 
 - **开机自启（默认开启）**：安装版首次运行即注册 Windows 登录项（菜单「服务 → 开机自动启动」可关）。
   配合自动拉起：重启电脑后 DSH 服务在后台自动就绪，双击应用即用
-- **终端全程后台静默**：默认用 `node.exe` 直连 JS 入口启动（进程树中无 cmd/batch，绝不弹窗）；
+- **终端全程后台静默**：内置 dsh 由 Electron 自带 node 静默运行（进程树中无 cmd/batch，绝不弹窗）；
   自定义命令经 `CREATE_NO_WINDOW` 方式启动，同样不弹任何终端/控制台窗口
-- **自动拉起**：检测到 DSH 服务未运行且「自动启动」开启时，静默启动 dsh（优先缓存直连，回退 npx），服务就绪后自动进入
+- **自动拉起**：检测到 DSH 服务未运行且「自动启动」开启时，静默启动内置 dsh，服务就绪后自动进入
 - **自定义命令**：修改用户数据目录下 `settings.json` 的 `serverCommand` 字段，或用环境变量 `DSH_DESKTOP_SERVER_CMD` 覆盖
 
 ## 快速开始
@@ -47,12 +47,18 @@
 
 安装位置：`%LOCALAPPDATA%\Programs\@dsh-aidesktop\DSH Desktop.exe`
 
+> 安装包**自包含 dsh 服务**（v0.1.5+，opencode 桌面端同款方案：用 Electron 自带 node 运行内置 dsh），
+> **新电脑无需预装 Node.js、不用联网**，开箱即用。旧版（≤0.1.4）需要系统装有 Node 且首启联网安装 dsh。
+
 ### 方式二：从源码运行
 
 ```bash
 npm install
 npm start
 ```
+
+> electron 二进制在 `npm install` 时自动下载（走 `.npmrc` 配置的 npmmirror 镜像，无需手动跑 install.js）。
+> `npm start` 首次会通过系统 node 拉 dsh 服务（慢一点，之后走 npx 缓存直连）。
 
 ## 服务地址配置
 
@@ -70,12 +76,17 @@ npm run dist
 
 产物：`dist/DSH-Desktop-Setup-<版本>.exe`（NSIS 一键安装器）
 
+> `npm run dist` 会先跑 `scripts/prep-resources.js`：把 `@deepseek-ai/dsh` 依赖树装进 `resources/`
+> （优先从本机 npx 缓存复制，否则 npm install；不入 git），再打包进安装包供运行时用。
+> 已存在的资源会跳过，用 `--force` 或 `node scripts/prep-resources.js --force` 强制重做；
+> 用 `DSH_VERSION=1.2.3 npm run dist` 固定 dsh 版本（默认 `latest`）。
 > **离线构建**：打包默认复用 `node_modules/electron/dist`（`build.electronDist`），不联网下载 Electron。
 > **证书问题**：内网/代理环境遇到 `unable to verify the first certificate` 时，
 > 用系统证书信任再打包：
 > ```powershell
 > $env:NODE_OPTIONS = "--use-system-ca"; npm run dist
 > ```
+> 开发机 `npm install` 遇到证书错误同理：`npm config set strict-ssl false`（仅限信任的网络）。
 > **安装目录名**：`@dsh-aidesktop` 由 `build/installer.nsh`（electron-builder 自动加载的自定义 NSIS 段）
 > 注入，改这个文件即可自定义目录名。
 

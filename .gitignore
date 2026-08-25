@@ -2,6 +2,9 @@
 node_modules/
 dist/
 .npm-cache/
+resources/
+ui/node_modules/
+ui/dist/
 
 # logs
 *.log

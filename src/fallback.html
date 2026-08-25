@@ -116,17 +116,25 @@
         color: #4f4f4f;
         font-family: Consolas, monospace;
       }
-      .log {
-        margin: 8px auto 0;
+      .console {
+        margin: 12px auto 0;
+        padding: 10px 12px;
+        width: min(720px, calc(100vw - 48px));
+        max-height: 46vh;
+        overflow-y: auto;
+        text-align: left;
         font-size: 11px;
-        color: #3c3c3c;
-        font-family: Consolas, monospace;
-        max-width: 420px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        line-height: 1.5;
+        color: #9ecbff;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        font-family: Consolas, "Courier New", monospace;
+        white-space: pre-wrap;
+        word-break: break-all;
+        user-select: text;
       }
-      .log:empty {
+      .console:empty {
         display: none;
       }
     </style>
@@ -144,7 +152,7 @@
         <button id="retry">重试</button>
       </div>
       <div class="cmd" id="cmd"></div>
-      <div class="log" id="log"></div>
+      <pre class="console" id="console"></pre>
     </div>
     <script>
       const urlEl = document.getElementById('url');
@@ -153,7 +161,6 @@
       const statusTextEl = document.getElementById('statusText');
       const startBtn = document.getElementById('start');
       const retryBtn = document.getElementById('retry');
-      const logEl = document.getElementById('log');
 
       const b = window.dshDesktop.bootstrap;
       urlEl.textContent = b.serverUrl.replace(/^https?:\/\//, '');
@@ -174,9 +181,19 @@
 
       setStatus(b.serverStarting ? 'starting' : 'waiting');
       window.dshDesktop.onServerStatus((s) => setStatus(s));
-      window.dshDesktop.onServerLog((line) => {
-        if (line) logEl.textContent = line;
-      });
+
+      // 完整终端控制台：追加所有服务输出，自动滚动到底部，最多保留 2000 行
+      const consoleEl = document.getElementById('console');
+      const MAX_CONSOLE_LINES = 2000;
+      function appendConsole(text) {
+        if (!text) return;
+        const lines = String(text).split(/\r?\n/);
+        const prev = consoleEl.textContent ? consoleEl.textContent.split('\n') : [];
+        const all = prev.concat(lines).slice(-MAX_CONSOLE_LINES);
+        consoleEl.textContent = all.join('\n');
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      }
+      window.dshDesktop.onServerLog((line) => appendConsole(line));
 
       startBtn.addEventListener('click', () => {
         startBtn.disabled = true;

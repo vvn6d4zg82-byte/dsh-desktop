@@ -106,7 +106,8 @@ let serverChild = null;
 let serverStarting = false;
 let serverStallTimer = null;
 let lastSpawnAttempt = 0;
-let lastLogSentAt = 0;
+let logBuffer = '';
+let logFlushTimer = null;
 
 function notifyFallback(status) {
   if (win && !win.isDestroyed() && !win.webContents.isLoadingMainFrame()) {
@@ -114,13 +115,21 @@ function notifyFallback(status) {
   }
 }
 
-function notifyServerLog(line) {
-  const now = Date.now();
-  if (now - lastLogSentAt < 250) return; // 限流
-  lastLogSentAt = now;
-  if (win && !win.isDestroyed() && !win.webContents.isLoadingMainFrame()) {
-    win.webContents.send('server-log', String(line).trim().slice(0, 160));
-  }
+// 把服务输出转发到加载页控制台：缓冲后批量发送，保留完整终端内容（不截断、不丢行）
+function notifyServerLog(text) {
+  const s = String(text);
+  if (!s) return;
+  logBuffer += s;
+  if (logFlushTimer) return;
+  logFlushTimer = setTimeout(() => {
+    logFlushTimer = null;
+    if (logBuffer) {
+      if (win && !win.isDestroyed() && !win.webContents.isLoadingMainFrame()) {
+        win.webContents.send('server-log', logBuffer);
+      }
+      logBuffer = '';
+    }
+  }, 100);
 }
 
 function effectiveServerCommand() {
@@ -129,6 +138,40 @@ function effectiveServerCommand() {
     settings.serverCommand ||
     DEFAULT_SETTINGS.serverCommand
   ).trim();
+}
+
+// 解析 dsh 包入口：读 package.json 的 bin，返回 cli JS 路径（解析失败返回 null）
+function resolveDshEntry(pkgDir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+    const bin = pkg.bin;
+    let rel = null;
+    if (typeof bin === 'string') rel = bin;
+    else if (bin && typeof bin === 'object') rel = bin.dsh || Object.values(bin)[0];
+    if (rel) {
+      const cliJs = path.join(pkgDir, rel);
+      if (fs.existsSync(cliJs)) return cliJs;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+// 安装版内置的 dsh（随安装包分发），没打包时返回 null
+function findBundledDsh() {
+  if (!app.isPackaged) return null;
+  return resolveDshEntry(path.join(process.resourcesPath, 'dsh', 'node_modules', '@deepseek-ai', 'dsh'));
+}
+
+// 内置运行时版本信息（resources/version.json，构建期写入）
+function bundledVersions() {
+  if (!app.isPackaged) return null;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(process.resourcesPath, 'version.json'), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 // 扫描 npx 缓存目录，找到已安装的 dsh 的 JS 入口（直接交给 node 运行，跳过 cmd/batch/npx 的 ~4s 解析）
@@ -147,21 +190,10 @@ function findCachedDsh() {
     }
     for (const dir of entries) {
       const pkgDir = path.join(root, dir, 'node_modules', '@deepseek-ai', 'dsh');
-      try {
-        const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
-        const bin = pkg.bin;
-        let rel = null;
-        if (typeof bin === 'string') rel = bin;
-        else if (bin && typeof bin === 'object') rel = bin.dsh || Object.values(bin)[0];
-        if (rel) {
-          const cliJs = path.join(pkgDir, rel);
-          if (fs.existsSync(cliJs)) {
-            const mtime = fs.statSync(pkgDir).mtimeMs;
-            if (!best || mtime > best.mtime) best = { cliJs, mtime };
-          }
-        }
-      } catch {
-        /* ignore */
+      const cliJs = resolveDshEntry(pkgDir);
+      if (cliJs) {
+        const mtime = fs.statSync(pkgDir).mtimeMs;
+        if (!best || mtime > best.mtime) best = { cliJs, mtime };
       }
     }
   }
@@ -170,7 +202,8 @@ function findCachedDsh() {
 
 let nodeExe = null;
 
-// 定位系统 node.exe：直接 spawn 它运行 JS 入口，避免 cmd 批处理二次进程弹窗/慢
+// 定位系统 node.exe（仅开发模式用）：直接 spawn 它运行 JS 入口，避免 cmd 批处理二次进程弹窗/慢
+// 安装版不用这里——内置 dsh 由 Electron 自带 node（ELECTRON_RUN_AS_NODE）直接运行，见 resolveLaunchTarget
 function findNodeExecutable() {
   if (nodeExe) return nodeExe;
   const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
@@ -206,19 +239,32 @@ function findNodeExecutable() {
 }
 
 // 解析实际执行目标：
-// - 默认命令：优先「node + dsh JS 入口」直连（无 cmd、无窗口、快）；无缓存时退化为「node + npx-cli.js」
+// - 安装版：直接用 Electron 自带 node（ELECTRON_RUN_AS_NODE）跑内置 dsh —— opencode 桌面端同款，零外部依赖
+// - 开发模式：系统 node + npx 缓存里的 dsh 直连；无缓存时退化为「node + npx-cli.js」
 // - 自定义命令：保持 cmd /c 兼容
+// dsh 的 HMR 插件要求 node 带 --expose-internals，故直连路径显式带上
 function resolveLaunchTarget() {
   const configured = effectiveServerCommand();
   const isDefault =
     !process.env.DSH_DESKTOP_SERVER_CMD &&
     (!settings.serverCommand || settings.serverCommand.trim() === DEFAULT_SETTINGS.serverCommand);
   if (isDefault) {
+    const bundled = findBundledDsh();
+    if (app.isPackaged && bundled && process.arch === 'x64') {
+      const display = `"${process.execPath}" --expose-internals "${bundled}" web（内置）`;
+      return {
+        type: 'direct',
+        exec: process.execPath,
+        args: ['--expose-internals', bundled, 'web'],
+        display,
+        electronNode: true,
+      };
+    }
     const node = findNodeExecutable();
     const cliJs = findCachedDsh();
     if (node && cliJs) {
-      const display = `"${node}" "${cliJs}" web`;
-      return { type: 'direct', exec: node, args: [cliJs, 'web'], display };
+      const display = `"${node}" --expose-internals "${cliJs}" web`;
+      return { type: 'direct', exec: node, args: ['--expose-internals', cliJs, 'web'], display };
     }
     if (node) {
       const npxCli = path.join(path.dirname(node), 'node_modules', 'npm', 'bin', 'npx-cli.js');
@@ -290,14 +336,18 @@ function startDshServer() {
   notifyFallback('starting');
 
   try {
-    const stdio = ['ignore', 'pipe', 'pipe'];
+    // 直连路径接上 stdin 管道，控制台可往里发命令；shell 路径保持 ignore
+    const stdio = target.type === 'direct' ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'];
+    const env = createServerEnv();
+    // 安装版直连：electron.exe 用 ELECTRON_RUN_AS_NODE 模式当 node 用，跑内置 dsh
+    if (target.electronNode) env.ELECTRON_RUN_AS_NODE = '1';
     if (target.type === 'direct') {
       // node 直连 JS 入口：进程树里没有任何 cmd/batch，绝无控制台窗口，也没有 cmd+npx 的解析开销
       serverChild = spawn(target.exec, target.args, {
         windowsHide: true,
         detached: false,
         stdio,
-        env: createServerEnv(),
+        env,
       });
     } else {
       // 自定义命令：cmd /d /s /c 兼容（windowsHide 隐藏主 cmd 窗口）
@@ -305,7 +355,7 @@ function startDshServer() {
         windowsHide: true,
         detached: false,
         stdio,
-        env: createServerEnv(),
+        env,
       });
     }
     serverChild.unref();
@@ -347,21 +397,24 @@ function startDshServer() {
 }
 
 let win = null;
+let workbenchWin = null;
 let pollTimer = null;
 
-function showFallback() {
-  if (!win || win.isDestroyed()) return;
-  win.loadFile(path.join(__dirname, 'fallback.html'));
+function markOnboardingDone() {
+  if (!settings.onboardingDone) {
+    settings.onboardingDone = true;
+    saveSettings();
+  }
+}
+
+// 每 3 秒探测服务状态并推给控制台；离线且开了自动拉起时拉起 dsh
+function startStatusPolling() {
   if (pollTimer) clearInterval(pollTimer);
-  // 每 3 秒探测一次；服务起来后自动跳转，必要时自动重新拉起服务
   pollTimer = setInterval(async () => {
-    if (await checkServer()) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-      clearStallTimer();
-      serverStarting = false;
+    const online = await checkServer();
+    notifyFallback(online ? 'online' : 'offline');
+    if (online) {
       markOnboardingDone();
-      loadServer();
       return;
     }
     if (
@@ -375,21 +428,40 @@ function showFallback() {
   }, 3000);
 }
 
-function markOnboardingDone() {
-  if (!settings.onboardingDone) {
-    settings.onboardingDone = true;
-    saveSettings();
+// 打开 DSH 工作台：独立窗口加载服务网页，服务在线才开
+async function openWorkbench() {
+  if (!(await checkServer())) return false;
+  if (workbenchWin && !workbenchWin.isDestroyed()) {
+    workbenchWin.focus();
+    return true;
   }
-}
-
-async function loadServer() {
-  if (!win || win.isDestroyed()) return;
+  workbenchWin = new BrowserWindow({
+    width: 1360,
+    height: 880,
+    title: 'DeepSeek Harness',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    backgroundColor: '#0f172a',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  workbenchWin.webContents.on('did-finish-load', () => {
+    applyTerminalCss(workbenchWin.webContents);
+  });
+  workbenchWin.on('closed', () => {
+    workbenchWin = null;
+  });
   try {
-    await win.loadURL(serverUrl.toString());
+    await workbenchWin.loadURL(serverUrl.toString());
   } catch (err) {
     console.error('loadURL failed:', err);
-    showFallback();
+    workbenchWin = null;
+    return false;
   }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -457,23 +529,21 @@ function createWindow() {
     }
   });
 
-  // 页面加载完成后注入「隐藏终端」样式（SPA 内动态出现的终端块也会命中该规则）
-  win.webContents.on('did-finish-load', () => {
-    applyTerminalCss(win.webContents);
-  });
+  // 主窗口 = 双控制台界面（服务终端 + 管理后台），始终加载本地 UI
+  win.loadFile(path.join(__dirname, '..', 'ui', 'dist', 'index.html'));
 
-  (async () => {
-    if (await checkServer()) {
-      loadServer();
-    } else {
-      showFallback();
-      // 初次启动 / 重启后首次启动：服务没跑就直接拉起
-      if (settings.autoStartServer) startDshServer();
-    }
-  })();
+  win.webContents.on('did-finish-load', () => {
+    // 页面就绪后开始探测；服务离线且开了自动拉起就直接拉起 dsh
+    startStatusPolling();
+    checkServer().then((online) => {
+      notifyFallback(online ? 'online' : 'offline');
+      if (!online && settings.autoStartServer) startDshServer();
+    });
+  });
 
   win.on('closed', () => {
     if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
     win = null;
   });
 }
@@ -489,16 +559,40 @@ ipcMain.on('get-bootstrap', (event) => {
   };
 });
 
+ipcMain.handle('get-state', async () => {
+  return {
+    settings: { ...settings },
+    bundledVersions: bundledVersions(),
+    serverUrl: serverUrl.toString(),
+    launchDisplay: resolveLaunchTarget().display,
+    versions: {
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+    },
+    isPackaged: app.isPackaged,
+    serverOnline: await checkServer(),
+    workbenchOpen: Boolean(workbenchWin && !workbenchWin.isDestroyed()),
+  };
+});
+
+ipcMain.handle('set-setting', (_event, key, value) => {
+  if (!(key in settings)) return false;
+  settings[key] = value;
+  saveSettings();
+  if (key === 'openAtLogin') setLoginItem(Boolean(value));
+  if (key === 'hideTerminal') {
+    if (workbenchWin && !workbenchWin.isDestroyed()) applyTerminalCss(workbenchWin.webContents);
+  }
+  return true;
+});
+
 ipcMain.on('retry', async () => {
   if (await checkServer()) {
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = null;
-    clearStallTimer();
-    serverStarting = false;
     markOnboardingDone();
-    loadServer();
+    notifyFallback('online');
   } else {
-    notifyFallback('waiting');
+    notifyFallback('offline');
     if (settings.autoStartServer) startDshServer();
   }
 });
@@ -507,21 +601,34 @@ ipcMain.on('start-server', () => {
   startDshServer();
 });
 
-// ---------------------------------------------------------------------------
-// 应用生命周期
-// ---------------------------------------------------------------------------
-loadSettings();
+ipcMain.on('stop-server', () => {
+  if (serverChild) {
+    killServerTree(serverChild.pid);
+    serverChild = null;
+  }
+  serverStarting = false;
+  clearStallTimer();
+  notifyFallback('offline');
+});
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-} else {
-  app.on('second-instance', () => {
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
-  });
+ipcMain.on('server-input', (_event, line) => {
+  const text = String(line ?? '');
+  if (!serverChild || !serverChild.stdin || serverChild.stdin.destroyed) return;
+  try {
+    serverChild.stdin.write(text.endsWith('\n') ? text : text + '\n');
+  } catch {
+    /* ignore */
+  }
+});
+
+ipcMain.handle('open-dsh', () => openWorkbench());
+
+ipcMain.on('close-dsh', () => {
+  if (workbenchWin && !workbenchWin.isDestroyed()) {
+    workbenchWin.close();
+    workbenchWin = null;
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 开机自启：直接写 HKCU Run 键（与系统其他自启应用同一机制，比 Electron 的
@@ -562,6 +669,22 @@ function isLoginItemEnabled() {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// 应用生命周期
+// ---------------------------------------------------------------------------
+loadSettings();
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
 
   app.whenReady().then(() => {
     app.setName('DSH Desktop');
@@ -604,7 +727,7 @@ function isLoginItemEnabled() {
       click: (item) => {
         settings.hideTerminal = item.checked;
         saveSettings();
-        if (win && !win.isDestroyed()) applyTerminalCss(win.webContents);
+        if (workbenchWin && !workbenchWin.isDestroyed()) applyTerminalCss(workbenchWin.webContents);
       },
     };
 
@@ -613,7 +736,8 @@ function isLoginItemEnabled() {
         {
           label: '文件',
           submenu: [
-            { label: '重新加载', accelerator: 'CmdOrCtrl+R', click: () => win && win.webContents.reload() },
+            { label: '打开 DSH 工作台', accelerator: 'CmdOrCtrl+W', click: () => openWorkbench() },
+            { label: '重新加载控制台', accelerator: 'CmdOrCtrl+R', click: () => win && win.webContents.reload() },
             { type: 'separator' },
             { label: '退出', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() },
           ],
@@ -651,6 +775,10 @@ function isLoginItemEnabled() {
             {
               label: `关于 DSH Desktop（服务: ${serverUrl.toString()}）`,
               click: () => {
+                const bv = bundledVersions();
+                const bvLine = bv && bv.dshVersion
+                  ? `\n内置 dsh: ${bv.dshVersion}`
+                  : '';
                 dialog.showMessageBox(win, {
                   type: 'info',
                   title: '关于',
@@ -659,7 +787,8 @@ function isLoginItemEnabled() {
                     `DeepSeek Harness 桌面端\n\n` +
                     `连接服务: ${serverUrl.toString()}\n` +
                     `启动命令: ${resolveLaunchTarget().display}\n` +
-                    `Electron ${process.versions.electron} / Chromium ${process.versions.chrome} / Node ${process.versions.node}`,
+                    `Electron ${process.versions.electron} / Chromium ${process.versions.chrome} / Node ${process.versions.node}` +
+                    bvLine,
                 });
               },
             },
