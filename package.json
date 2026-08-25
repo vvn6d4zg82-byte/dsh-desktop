@@ -12,9 +12,8 @@
   "license": "MIT",
   "scripts": {
     "start": "npm run build:ui && node scripts/run-electron.js",
-    "prep": "node scripts/prep-resources.js",
     "build:ui": "vite build --config ui/vite.config.ts",
-    "dist": "npm run build:ui && node scripts/prep-resources.js && electron-builder --win",
+    "dist": "npm run build:ui && electron-builder --win",
     "postinstall": "node node_modules/electron/install.js"
   },
   "devDependencies": {
@@ -52,12 +51,6 @@
       "ui/dist/**/*",
       "build/icon.png",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "resources",
-        "to": "."
-      }
     ],
     "win": {
       "target": [

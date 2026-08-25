@@ -16,26 +16,25 @@
 
 ## 功能特性
 
-- 🪟 原生窗口加载 DSH Web GUI（自动读取 `DSH_WEB_URL` 环境变量，默认 `http://127.0.0.1:3080`）
-- ⚡ **服务未运行时自动拉起**：安装版直接用 **Electron 自带 node**（`ELECTRON_RUN_AS_NODE`）跑内置 dsh，
-  零外部依赖、完全离线；开发模式用系统 node + dsh 直连（跳过 cmd/批处理/npx，快 ~4s）
+- 🪟 原生窗口 = **shadcn/ui 双控制台**：服务终端（完整 dsh 日志 + 命令输入）+ 管理后台（服务启停/设置/版本信息）
+- ⚡ **服务未运行时自动拉起**：系统 node + dsh 直连（npx 缓存，带 `--expose-internals`，跳过 cmd/批处理快 ~4s）；
+  无缓存时自动 `npx --yes @deepseek-ai/dsh web` 联网安装（首次较慢，控制台可见进度）
+- 🖥️ DSH 网页界面（工作台）在独立窗口打开，支持一键打开/关闭
 - 📺 **可隐藏 DSH 网页里的终端界面**：菜单「视图 → 隐藏终端界面」（默认开启），
   通过注入 `[data-terminal]{display:none}` 实现
-- ⏱️ 借鉴 opencode 桌面端：启动就绪等待 + 3 分钟超时看门狗 + 失败自动重试（15s 冷却）
+- ⏱️ 启动就绪等待 + 3 分钟超时看门狗 + 失败自动重试（15s 冷却）
 - 🔐 给拉起的服务注入 `--use-system-ca`（内网/代理证书环境）与环回地址免代理
-- 🔁 服务离线时显示极简加载页（黑鲸 logo 缓慢变色 + 实时启动日志），每 3 秒自动探测
 - 🖱️ 外部链接（非 DSH 服务的 http/https）自动用系统默认浏览器打开
 - 📌 单实例运行：重复启动会聚焦已有窗口，不会开多个
-- 🧭 内置中文菜单：服务（启动/自动拉起/开机自启）/ 视图 / 帮助
 - 🚀 一键安装器：装到 `%LOCALAPPDATA%\Programs\@dsh-aidesktop\`，自动创建桌面与开始菜单快捷方式
 
 ## 服务管理
 
 - **开机自启（默认开启）**：安装版首次运行即注册 Windows 登录项（菜单「服务 → 开机自动启动」可关）。
   配合自动拉起：重启电脑后 DSH 服务在后台自动就绪，双击应用即用
-- **终端全程后台静默**：内置 dsh 由 Electron 自带 node 静默运行（进程树中无 cmd/batch，绝不弹窗）；
+- **终端全程后台静默**：dsh 由系统 node 静默运行（进程树中无 cmd/batch，绝不弹窗）；
   自定义命令经 `CREATE_NO_WINDOW` 方式启动，同样不弹任何终端/控制台窗口
-- **自动拉起**：检测到 DSH 服务未运行且「自动启动」开启时，静默启动内置 dsh，服务就绪后自动进入
+- **自动拉起**：检测到 DSH 服务未运行且「自动启动」开启时，静默启动 dsh（优先 npx 缓存直连，无缓存联网安装），服务就绪后自动进入
 - **自定义命令**：修改用户数据目录下 `settings.json` 的 `serverCommand` 字段，或用环境变量 `DSH_DESKTOP_SERVER_CMD` 覆盖
 
 ## 快速开始
@@ -47,8 +46,8 @@
 
 安装位置：`%LOCALAPPDATA%\Programs\@dsh-aidesktop\DSH Desktop.exe`
 
-> 安装包**自包含 dsh 服务**（v0.1.5+，opencode 桌面端同款方案：用 Electron 自带 node 运行内置 dsh），
-> **新电脑无需预装 Node.js、不用联网**，开箱即用。旧版（≤0.1.4）需要系统装有 Node 且首启联网安装 dsh。
+> 轻量安装包（~96MB）。**首次运行需联网**：应用会自动 `npx` 安装并启动 dsh 服务（控制台可见进度）；
+> 需要系统装有 Node.js。装好一次后走 npx 缓存直连，后续离线可用。
 
 ### 方式二：从源码运行
 
@@ -76,10 +75,7 @@ npm run dist
 
 产物：`dist/DSH-Desktop-Setup-<版本>.exe`（NSIS 一键安装器）
 
-> `npm run dist` 会先跑 `scripts/prep-resources.js`：把 `@deepseek-ai/dsh` 依赖树装进 `resources/`
-> （优先从本机 npx 缓存复制，否则 npm install；不入 git），再打包进安装包供运行时用。
-> 已存在的资源会跳过，用 `--force` 或 `node scripts/prep-resources.js --force` 强制重做；
-> 用 `DSH_VERSION=1.2.3 npm run dist` 固定 dsh 版本（默认 `latest`）。
+> `npm run dist` 先 `vite build` 前端（`ui/dist`）再 electron-builder 打包，安装包轻量（~96MB），不含 dsh 依赖树。
 > **离线构建**：打包默认复用 `node_modules/electron/dist`（`build.electronDist`），不联网下载 Electron。
 > **证书问题**：内网/代理环境遇到 `unable to verify the first certificate` 时，
 > 用系统证书信任再打包：

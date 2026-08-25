@@ -180,7 +180,6 @@ export function AdminPanel({
           <CardDescription>运行时与内置资源信息</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <Info label="内置 dsh" value={state.bundledVersions?.dshVersion ?? '—'} />
           <Info label="服务地址" value={state.serverUrl} />
           <Info label="Electron" value={state.versions.electron} />
           <Info label="Chromium" value={state.versions.chrome} />

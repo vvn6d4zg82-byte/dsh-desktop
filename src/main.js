@@ -158,22 +158,6 @@ function resolveDshEntry(pkgDir) {
   return null;
 }
 
-// 安装版内置的 dsh（随安装包分发），没打包时返回 null
-function findBundledDsh() {
-  if (!app.isPackaged) return null;
-  return resolveDshEntry(path.join(process.resourcesPath, 'dsh', 'node_modules', '@deepseek-ai', 'dsh'));
-}
-
-// 内置运行时版本信息（resources/version.json，构建期写入）
-function bundledVersions() {
-  if (!app.isPackaged) return null;
-  try {
-    return JSON.parse(fs.readFileSync(path.join(process.resourcesPath, 'version.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
 // 扫描 npx 缓存目录，找到已安装的 dsh 的 JS 入口（直接交给 node 运行，跳过 cmd/batch/npx 的 ~4s 解析）
 function findCachedDsh() {
   let best = null;
@@ -239,8 +223,7 @@ function findNodeExecutable() {
 }
 
 // 解析实际执行目标：
-// - 安装版：直接用 Electron 自带 node（ELECTRON_RUN_AS_NODE）跑内置 dsh —— opencode 桌面端同款，零外部依赖
-// - 开发模式：系统 node + npx 缓存里的 dsh 直连；无缓存时退化为「node + npx-cli.js」
+// - 默认命令：系统 node + npx 缓存里的 dsh 直连（带 --expose-internals）；无缓存时退化为「node + npx-cli.js」
 // - 自定义命令：保持 cmd /c 兼容
 // dsh 的 HMR 插件要求 node 带 --expose-internals，故直连路径显式带上
 function resolveLaunchTarget() {
@@ -249,17 +232,6 @@ function resolveLaunchTarget() {
     !process.env.DSH_DESKTOP_SERVER_CMD &&
     (!settings.serverCommand || settings.serverCommand.trim() === DEFAULT_SETTINGS.serverCommand);
   if (isDefault) {
-    const bundled = findBundledDsh();
-    if (app.isPackaged && bundled && process.arch === 'x64') {
-      const display = `"${process.execPath}" --expose-internals "${bundled}" web（内置）`;
-      return {
-        type: 'direct',
-        exec: process.execPath,
-        args: ['--expose-internals', bundled, 'web'],
-        display,
-        electronNode: true,
-      };
-    }
     const node = findNodeExecutable();
     const cliJs = findCachedDsh();
     if (node && cliJs) {
@@ -339,8 +311,6 @@ function startDshServer() {
     // 直连路径接上 stdin 管道，控制台可往里发命令；shell 路径保持 ignore
     const stdio = target.type === 'direct' ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'];
     const env = createServerEnv();
-    // 安装版直连：electron.exe 用 ELECTRON_RUN_AS_NODE 模式当 node 用，跑内置 dsh
-    if (target.electronNode) env.ELECTRON_RUN_AS_NODE = '1';
     if (target.type === 'direct') {
       // node 直连 JS 入口：进程树里没有任何 cmd/batch，绝无控制台窗口，也没有 cmd+npx 的解析开销
       serverChild = spawn(target.exec, target.args, {
@@ -562,7 +532,7 @@ ipcMain.on('get-bootstrap', (event) => {
 ipcMain.handle('get-state', async () => {
   return {
     settings: { ...settings },
-    bundledVersions: bundledVersions(),
+    bundledVersions: null,
     serverUrl: serverUrl.toString(),
     launchDisplay: resolveLaunchTarget().display,
     versions: {
@@ -775,10 +745,6 @@ if (!gotLock) {
             {
               label: `关于 DSH Desktop（服务: ${serverUrl.toString()}）`,
               click: () => {
-                const bv = bundledVersions();
-                const bvLine = bv && bv.dshVersion
-                  ? `\n内置 dsh: ${bv.dshVersion}`
-                  : '';
                 dialog.showMessageBox(win, {
                   type: 'info',
                   title: '关于',
@@ -787,8 +753,7 @@ if (!gotLock) {
                     `DeepSeek Harness 桌面端\n\n` +
                     `连接服务: ${serverUrl.toString()}\n` +
                     `启动命令: ${resolveLaunchTarget().display}\n` +
-                    `Electron ${process.versions.electron} / Chromium ${process.versions.chrome} / Node ${process.versions.node}` +
-                    bvLine,
+                    `Electron ${process.versions.electron} / Chromium ${process.versions.chrome} / Node ${process.versions.node}`,
                 });
               },
             },
