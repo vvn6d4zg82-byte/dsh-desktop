@@ -1,0 +1,272 @@
+/* ---------------------------------------------------------------------------
+   Win95 蓝灰复古 · 全局外壳 + 终端皮肤
+   整套统一：银灰 bevel 面板 + navy 标题栏 + 黑底绿字终端。
+   .retro-app 通过在根元素重定义 shadcn CSS 变量，让所有组件自动变银灰；
+   终端控制器（.wc-*）保持亮银灰窗口风，与外壳完全同调。
+   ------------------------------------------------------------------------ */
+
+.retro-app {
+  --radius: 3px;
+  --background: 214 15% 86%;
+  --foreground: 220 12% 15%;
+  --card: 0 0% 96%;
+  --card-foreground: 220 12% 15%;
+  --popover: 0 0% 96%;
+  --popover-foreground: 220 12% 15%;
+  --primary: 221 85% 36%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 214 12% 84%;
+  --secondary-foreground: 220 12% 20%;
+  --muted: 214 14% 80%;
+  --muted-foreground: 220 10% 42%;
+  --accent: 214 18% 74%;
+  --accent-foreground: 220 12% 16%;
+  --destructive: 0 64% 44%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 218 12% 64%;
+  --input: 218 12% 60%;
+  --ring: 221 80% 44%;
+  color-scheme: light;
+}
+
+/* --- bevel：Win95 细凸/细凹（深色边框 + 高光） --- */
+.retro-app .bevel-raise {
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.9), inset -1px -1px 0 rgba(0, 0, 0, 0.22);
+}
+.retro-app .bevel-sink {
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.35), inset -1px -1px 0 rgba(255, 255, 255, 0.75);
+}
+
+/* --- navy 标题栏（全应用「蓝」的锚点） --- */
+.retro-titlebar {
+  background: linear-gradient(90deg, #000080, #1084d0);
+  color: #ffffff;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.35);
+}
+.retro-app .titlebar-btn {
+  background: rgba(8, 16, 30, 0.35);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.3), inset -1px -1px 0 rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.retro-app .titlebar-btn:hover {
+  background: rgba(8, 16, 30, 0.55);
+}
+
+/* --- 按压反馈：所有 retro 按钮按下都凹下去，触发一眼可见 --- */
+.retro-app button:active {
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.35), inset -1px -1px 0 rgba(255, 255, 255, 0.55) !important;
+}
+.retro-app .titlebar-btn:active {
+  background: rgba(8, 16, 30, 0.7);
+}
+
+/* --- 底部状态条 --- */
+.retro-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 26px;
+  padding: 0 12px;
+  background: #d7dbe0;
+  border-top: 1px solid #ffffff;
+  box-shadow: 0 -1px 0 #9aa1a9;
+  color: #47505c;
+  font-family: Consolas, "Courier New", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+/* --- 选中 Tab：凹陷选中态（覆盖 shadcn 默认） --- */
+.retro-app [data-state="active"] {
+  background: #eef2f6 !important;
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.28), inset -1px -1px 0 rgba(255, 255, 255, 0.85) !important;
+  color: #0b1526 !important;
+}
+.retro-app [data-state="active"]:hover {
+  background: #eef2f6 !important;
+}
+
+/* ---------------------------------------------------------------------------
+   终端控制器（服务终端标签页）—— 与外壳同调的银灰窗口 + 黑底绿字视口
+   ------------------------------------------------------------------------ */
+.wc-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #ffffff #0a0a0a #0a0a0a #ffffff;
+  box-shadow: inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 #808080;
+}
+
+.wc-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  background: linear-gradient(90deg, #000080, #1084d0);
+  color: #ffffff;
+  font-family: Consolas, "Courier New", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-shadow: 1px 1px 0 #000000;
+}
+
+.wc-term {
+  background: #000000;
+  color: #00cc00;
+  font-family: Consolas, "Courier New", ui-monospace, monospace;
+  box-shadow: inset 0 0 44px rgba(0, 255, 65, 0.05);
+}
+.wc-crt {
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.18) 0px,
+    rgba(0, 0, 0, 0.18) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+.wc-toolbar {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid #ffffff;
+  box-shadow: 0 -1px 0 #808080;
+}
+.wc-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-top: 1px solid #ffffff;
+  box-shadow: 0 -1px 0 #808080;
+  color: #404040;
+  font-family: Consolas, "Courier New", ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.wc-btn {
+  border: 1px solid #808080;
+  background: #c0c0c0;
+  color: #000000;
+  font-family: Consolas, "Courier New", ui-monospace, monospace;
+  font-size: 12px;
+  box-shadow: inset -1px -1px 0 0 #0a0a0a, inset 1px 1px 0 0 #ffffff;
+  cursor: pointer;
+  user-select: none;
+}
+.wc-btn:hover {
+  background: #d8d8d8;
+}
+.wc-btn:active {
+  box-shadow: inset 1px 1px 0 0 #0a0a0a, inset -1px -1px 0 0 #ffffff;
+}
+
+.wc-blink {
+  animation: wc-blink 1s steps(1) infinite;
+}
+@keyframes wc-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* --- 文件栏（服务终端左栏）+ 分隔条 --- */
+.wc-files {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #c0c0c0;
+  border-right: 1px solid #808080;
+  box-shadow: inset -1px 0 0 #ffffff;
+}
+.wc-files-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-family: Consolas, "Courier New", ui-monospace, monospace;
+  font-size: 11px;
+  border-bottom: 1px solid #808080;
+  box-shadow: 0 1px 0 #ffffff;
+}
+.wc-files-root {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1a1a1a;
+}
+.wc-files-btn {
+  flex-shrink: 0;
+  border: 1px solid #808080;
+  background: #c0c0c0;
+  box-shadow: inset -1px -1px 0 0 #0a0a0a, inset 1px 1px 0 0 #ffffff;
+  font-family: Consolas, "Courier New", ui-monospace, monospace;
+  font-size: 11px;
+  color: #1a1a1a;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+.wc-files-btn:active {
+  box-shadow: inset 1px 1px 0 0 #0a0a0a, inset -1px -1px 0 0 #ffffff;
+}
+.wc-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+  font-family: Consolas, "Courier New", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1a1a1a;
+}
+.wc-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.wc-tree-row.folder {
+  cursor: pointer;
+}
+.wc-tree-row.folder:hover {
+  background: #e6e9ed;
+}
+.wc-tree-row .marker {
+  width: 12px;
+  flex-shrink: 0;
+  color: #404040;
+}
+.wc-tree-row .size {
+  margin-left: auto;
+  padding-left: 8px;
+  color: #60676f;
+  font-size: 10px;
+}
+.wc-tree-empty {
+  padding: 10px;
+  color: #808080;
+  font-size: 11px;
+}
+.wc-divider {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: #c0c0c0;
+  border-left: 1px solid #ffffff;
+  border-right: 1px solid #808080;
+  touch-action: none;
+}
+.wc-divider:hover {
+  background: #a7b0bb;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wc-blink {
+    animation: none;
+  }
+}

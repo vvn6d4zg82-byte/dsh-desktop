@@ -4,6 +4,7 @@ const { app, BrowserWindow, Menu, ipcMain, shell, session, dialog } = require('e
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const { spawn, execFileSync } = require('child_process');
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,7 @@ const DEFAULT_SETTINGS = {
   systemCerts: true, // 给拉起的服务注入 --use-system-ca（内网/代理证书环境需要）
   onboardingDone: false, // 首次启动引导是否已完成
   hideTerminal: true, // 隐藏 DSH 网页里的终端界面（data-terminal 块）
+  fileBrowseRoot: '', // 服务终端「文件」栏浏览的根目录（空 = 默认 $DSH_HOME）
 };
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -222,6 +224,26 @@ function findNodeExecutable() {
   return null;
 }
 
+// 探测本机 Tailscale（tailnet）信息：域名 + IPv4。供 harness 重启时注入 --trusted-host，
+// 让手机经 tailnet 域名直连也能过 browser-trust 围栏（而非只能本机）。
+let tailnetCache = null;
+function getTailnetInfo() {
+  if (tailnetCache) return tailnetCache;
+  tailnetCache = { fqdn: '', ipv4: '' };
+  try {
+    const out = execFileSync('tailscale', ['status', '--json'], { windowsHide: true, encoding: 'utf8', timeout: 5000 });
+    const j = JSON.parse(out);
+    const self = j && j.Self;
+    tailnetCache = {
+      fqdn: String(self?.DNSName || '').replace(/\.$/, ''),
+      ipv4: Array.isArray(self?.TailscaleIPs) ? self.TailscaleIPs.find((x) => String(x).startsWith('100.')) || '' : '',
+    };
+  } catch {
+    /* 未装/未连 Tailscale 时留空（仅本机可用） */
+  }
+  return tailnetCache;
+}
+
 // 解析实际执行目标：
 // - 默认命令：系统 node + npx 缓存里的 dsh 直连（带 --expose-internals）；无缓存时退化为「node + npx-cli.js」
 // - 自定义命令：保持 cmd /c 兼容
@@ -236,7 +258,16 @@ function resolveLaunchTarget() {
     const cliJs = findCachedDsh();
     if (node && cliJs) {
       const display = `"${node}" --expose-internals "${cliJs}" web`;
-      return { type: 'direct', exec: node, args: ['--expose-internals', cliJs, 'web'], display };
+      const args = ['--expose-internals', cliJs, 'web'];
+      // tailnet 域名放行进 browser-trust（手机直连 harness），失败即忽略（仅本机可用）
+      const tl = getTailnetInfo();
+      if (tl.fqdn) {
+        args.push('--trusted-host', tl.fqdn, '--trusted-host', `${tl.fqdn}:443`);
+      }
+      if (tl.ipv4) {
+        args.push('--trusted-host', tl.ipv4, '--trusted-host', `${tl.ipv4}:3080`);
+      }
+      return { type: 'direct', exec: node, args, display };
     }
     if (node) {
       const npxCli = path.join(path.dirname(node), 'node_modules', 'npm', 'bin', 'npx-cli.js');
@@ -279,6 +310,8 @@ function createServerEnv() {
       env.NODE_OPTIONS = (opts ? opts + ' ' : '') + '--use-system-ca';
     }
   }
+  // 安全默认：新建 agent 会话 workspace-write + ask（工具需确认）；手机/桌面一致
+  if (!env.DSH_PERMISSION_MODE) env.DSH_PERMISSION_MODE = 'workspace-write';
   return env;
 }
 
@@ -581,22 +614,100 @@ ipcMain.on('stop-server', () => {
   notifyFallback('offline');
 });
 
-ipcMain.on('server-input', (_event, line) => {
-  const text = String(line ?? '');
-  if (!serverChild || !serverChild.stdin || serverChild.stdin.destroyed) return;
-  try {
-    serverChild.stdin.write(text.endsWith('\n') ? text : text + '\n');
-  } catch {
-    /* ignore */
-  }
-});
-
 ipcMain.handle('open-dsh', () => openWorkbench());
 
 ipcMain.on('close-dsh', () => {
   if (workbenchWin && !workbenchWin.isDestroyed()) {
     workbenchWin.close();
     workbenchWin = null;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 文件浏览服务（只读目录树）
+//
+// 服务终端左侧「文件」栏的懒加载后端。根目录 = settings.fileBrowseRoot，
+// 默认 $DSH_HOME（cordis/dsh 环境根：profiles/plugins/config/db/log）。
+// 只读、路径沙箱（拒绝逃逸）。设计成可被未来 QQ 管理员机器人桥复用：
+// 换消费者不换实现，renderer 只是其中一个消费端。
+// ---------------------------------------------------------------------------
+function resolveBrowseRoot() {
+  return settings.fileBrowseRoot || (process.env.DSH_HOME || path.join(os.homedir(), '.dsh'));
+}
+
+// 把“相对根的路径”安全解析成磁盘路径；逃逸（../、绝对路径）返回 null
+function safeResolveRelative(rel) {
+  if (typeof rel !== 'string' || !rel) return resolveBrowseRoot();
+  const root = resolveBrowseRoot();
+  const joined = path.normalize(path.join(root, rel));
+  const relFromRoot = path.relative(root, joined);
+  if (relFromRoot.startsWith('..') || path.isAbsolute(relFromRoot)) return null;
+  return joined;
+}
+
+function listDir(rel) {
+  const dir = safeResolveRelative(rel);
+  if (!dir) return { ok: false, error: 'path outside browse root' };
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true }).map((de) => {
+      const full = path.join(dir, de.name);
+      const entry = { name: de.name, type: de.isDirectory() ? 'dir' : 'file', size: 0, mtime: 0 };
+      try {
+        const st = fs.statSync(full);
+        entry.size = st.size;
+        entry.mtime = st.mtimeMs;
+      } catch {
+        /* 符号链接断链等：忽略 stat 失败 */
+      }
+      return entry;
+    });
+  } catch (err) {
+    return { ok: false, error: err.code || 'list failed' };
+  }
+  entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return { ok: true, path: dir, entries };
+}
+
+ipcMain.handle('fs-list', (_event, rel) => listDir(rel));
+ipcMain.handle('fs-root', () => resolveBrowseRoot());
+ipcMain.handle('fs-set-root', async () => {
+  const r = await dialog.showOpenDialog({
+    title: '选择文件浏览根目录',
+    properties: ['openDirectory'],
+  });
+  if (!r.canceled && r.filePaths[0]) {
+    settings.fileBrowseRoot = r.filePaths[0];
+    saveSettings();
+  }
+  return resolveBrowseRoot();
+});
+
+// --- 远程手机访问（Tailscale）：
+//   remote-info   → 本机 tailnet 域名/IP + 手机可访问地址
+//   remote-expose → 把 :3080 广告到 tailnet（tailscale serve tcp），或 reset 关闭
+ipcMain.handle('remote-info', async () => {
+  const t = getTailnetInfo();
+  return {
+    ...t,
+    httpsUri: t.fqdn ? `https://${t.fqdn}/` : '',
+    httpUri: t.ipv4 ? `http://${t.ipv4}:3080/` : '',
+  };
+});
+
+ipcMain.handle('remote-expose', async (_event, on) => {
+  try {
+    if (on) {
+      execFileSync('tailscale', ['serve', '--bg', '--tcp', '3080', 'tcp://127.0.0.1:3080'], { windowsHide: true, timeout: 15000, stdio: 'ignore' });
+    } else {
+      execFileSync('tailscale', ['serve', 'reset'], { windowsHide: true, timeout: 15000, stdio: 'ignore' });
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'tailscale 调用失败' };
   }
 });
 

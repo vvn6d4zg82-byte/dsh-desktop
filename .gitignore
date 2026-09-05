@@ -17,3 +17,6 @@ Thumbs.db
 # editor
 .vscode/
 .idea/
+
+# claude local
+.claude/

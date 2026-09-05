@@ -6,6 +6,7 @@ export interface DshSettings {
   systemCerts: boolean;
   onboardingDone: boolean;
   hideTerminal: boolean;
+  fileBrowseRoot: string;
 }
 
 export interface DshState {
@@ -19,6 +20,27 @@ export interface DshState {
   workbenchOpen: boolean;
 }
 
+export interface FsEntry {
+  name: string;
+  type: 'dir' | 'file';
+  size: number;
+  mtime: number;
+}
+
+export interface FsListResult {
+  ok: boolean;
+  path?: string;
+  entries?: FsEntry[];
+  error?: string;
+}
+
+export interface RemoteInfo {
+  fqdn: string;
+  ipv4: string;
+  httpsUri: string;
+  httpUri: string;
+}
+
 export interface DshDesktopApi {
   bootstrap: {
     serverUrl: string;
@@ -30,9 +52,13 @@ export interface DshDesktopApi {
   retry(): void;
   startServer(): void;
   stopServer(): void;
-  serverInput(line: string): void;
   openDsh(): Promise<boolean>;
   closeDsh(): void;
+  fsList(rel: string): Promise<FsListResult>;
+  fsRoot(): Promise<string>;
+  fsSetRoot(): Promise<string>;
+  remoteInfo(): Promise<RemoteInfo>;
+  remoteExpose(on: boolean): Promise<{ ok: boolean; error?: string }>;
   onServerStatus(cb: (status: string) => void): void;
   onServerLog(cb: (line: string) => void): void;
 }
