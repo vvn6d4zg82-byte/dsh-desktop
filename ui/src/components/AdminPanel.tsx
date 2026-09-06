@@ -194,10 +194,11 @@ export function AdminPanel({
           {remote?.fqdn ? (
             <>
               <p className="break-all font-mono text-sm font-semibold text-foreground">
-                HTTPS：{remote.httpsUri}（手机最佳）
+                HTTPS（harness 必用，http 会报 crypto.randomUUID is not a function）：
               </p>
+              <p className="break-all font-mono text-sm text-foreground">{remote.httpsUri}</p>
               <p className="break-all font-mono text-xs text-muted-foreground">
-                HTTP（兜底）：{remote.httpUri} · 域名 {remote.fqdn} · IP {remote.ipv4}
+                仅 API 用 http：{remote.httpUri}/sync/… · 域名 {remote.fqdn} · IP {remote.ipv4}
               </p>
             </>
           ) : (
