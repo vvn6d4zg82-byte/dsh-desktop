@@ -37,7 +37,9 @@ if (!app.isPackaged) {
 // ---------------------------------------------------------------------------
 const DEFAULT_SETTINGS = {
   settingsVersion: 2, // 设置结构版本：>=2 表示 v0.1.4+（开机自启默认开启）
-  serverCommand: 'npx --yes @deepseek-ai/dsh web --host 0.0.0.0', // 拉起 DSH 服务（--yes 免 npx 交互提示，配合 windowsHide 全静默）
+  // 注意：不要给默认命令加 --host 0.0.0.0 —— dsh 出于安全（会向网络暴露远程代码执行）明确拒绝该绑定；
+  // 默认即绑定 127.0.0.1，LAN/手机访问走 Tailscale serve（见 remote-expose）。
+  serverCommand: 'npx --yes @deepseek-ai/dsh web', // 拉起 DSH 服务（--yes 免 npx 交互提示，配合 windowsHide 全静默）
   autoStartServer: true, // DSH 服务未运行时是否自动拉起
   openAtLogin: true, // 开机自启（默认开启，安装版首次运行即注册 Windows 登录项）
   systemCerts: true, // 给拉起的服务注入 --use-system-ca（内网/代理证书环境需要）
@@ -46,6 +48,10 @@ const DEFAULT_SETTINGS = {
   fileBrowseRoot: '', // 服务终端「文件」栏浏览的根目录（空 = 默认 $DSH_HOME）
 };
 
+// v0.2.0 曾把默认命令写成 `... web --host 0.0.0.0`，但 dsh 拒绝该绑定，属于坏默认；
+// 存过该值的设置要迁移回干净默认，并把它视为「默认」处理（走 node+dsh 直连，绕开 cmd/npx）
+const LEGACY_HOST_DEFAULT_SERVER_CMD = 'npx --yes @deepseek-ai/dsh web --host 0.0.0.0';
+
 let settings = { ...DEFAULT_SETTINGS };
 
 function settingsPath() {
@@ -53,16 +59,22 @@ function settingsPath() {
 }
 
 function loadSettings() {
+  let changed = false;
   try {
     const raw = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
-    const needsMigration = !raw.settingsVersion || raw.settingsVersion < 2;
     settings = { ...DEFAULT_SETTINGS, ...raw };
-    if (needsMigration) {
+    if (!raw.settingsVersion || raw.settingsVersion < 2) {
       // v0.1.4 起开机自启改为默认开启：旧版设置里显式存过 false，这里强制迁移一次
       settings.openAtLogin = true;
       settings.settingsVersion = 2;
-      saveSettings();
+      changed = true;
     }
+    if (settings.serverCommand && settings.serverCommand.trim() === LEGACY_HOST_DEFAULT_SERVER_CMD) {
+      // v0.2.0 的坏默认（--host 0.0.0.0 会被 dsh 拒绝）迁移回干净默认
+      settings.serverCommand = DEFAULT_SETTINGS.serverCommand;
+      changed = true;
+    }
+    if (changed) saveSettings();
   } catch {
     /* 首次启动没有设置文件，用默认值 */
   }
@@ -108,6 +120,8 @@ let serverChild = null;
 let serverStarting = false;
 let serverStallTimer = null;
 let lastSpawnAttempt = 0;
+let serverTokenUrl = ''; // dsh 每次启动会生成随机 token 的真实服务地址（http://127.0.0.1:3080/?token=...）
+let workbenchLoadedUrl = ''; // 工作台最近一次实际下发加载的 URL（token URL 303 后会落到普通地址栏，不能拿 getURL() 对比）
 let logBuffer = '';
 let logFlushTimer = null;
 
@@ -117,10 +131,17 @@ function notifyFallback(status) {
   }
 }
 
+// 抓取 stdout 里 dsh 打印的真实服务地址（带 token），供工作台/远程访问使用
+function captureServerUrl(text) {
+  const m = String(text).match(/https?:\/\/[^\s]*[?&]token=[^\s]*/);
+  if (m && m[0]) serverTokenUrl = m[0].trim();
+}
+
 // 把服务输出转发到加载页控制台：缓冲后批量发送，保留完整终端内容（不截断、不丢行）
 function notifyServerLog(text) {
   const s = String(text);
   if (!s) return;
+  captureServerUrl(s);
   logBuffer += s;
   if (logFlushTimer) return;
   logFlushTimer = setTimeout(() => {
@@ -206,6 +227,17 @@ function findNodeExecutable() {
       /* ignore */
     }
   }
+  // 直接扫描 PATH 里的 node.exe：覆盖非标准安装目录（如便携版 node），
+  // 不依赖 `where` 的解析，也避免 cmd/npx 依赖（PATH 里没有就找不到）
+  for (const dir of (process.env.PATH || '').split(';')) {
+    if (!dir) continue;
+    try {
+      const c = path.join(dir.replace(/^"|"$/g, ''), 'node.exe');
+      if (fs.existsSync(c)) return (nodeExe = c);
+    } catch {
+      /* ignore */
+    }
+  }
   try {
     // 兜底：where node（同步、无窗口，失败一次才走这里，结果缓存）
     const out = execFileSync('where.exe', ['node'], {
@@ -244,15 +276,20 @@ function getTailnetInfo() {
   return tailnetCache;
 }
 
+// serverCommand 是否算「非默认」：空 / 干净默认 / v0.2.0 坏默认（--host 0.0.0.0）都按默认处理，
+// 只有用户真正改成别的命令才走脆弱的 cmd /c shell 路径
+function isCustomServerCommand(value) {
+  const s = (value || '').trim();
+  return !(s === '' || s === DEFAULT_SETTINGS.serverCommand || s === LEGACY_HOST_DEFAULT_SERVER_CMD);
+}
+
 // 解析实际执行目标：
 // - 默认命令：系统 node + npx 缓存里的 dsh 直连（带 --expose-internals）；无缓存时退化为「node + npx-cli.js」
 // - 自定义命令：保持 cmd /c 兼容
 // dsh 的 HMR 插件要求 node 带 --expose-internals，故直连路径显式带上
 function resolveLaunchTarget() {
   const configured = effectiveServerCommand();
-  const isDefault =
-    !process.env.DSH_DESKTOP_SERVER_CMD &&
-    (!settings.serverCommand || settings.serverCommand.trim() === DEFAULT_SETTINGS.serverCommand);
+  const isDefault = !process.env.DSH_DESKTOP_SERVER_CMD && !isCustomServerCommand(settings.serverCommand);
   if (isDefault) {
     const node = findNodeExecutable();
     const cliJs = findCachedDsh();
@@ -339,6 +376,7 @@ function startDshServer() {
   lastSpawnAttempt = Date.now();
   clearStallTimer();
   notifyFallback('starting');
+  serverTokenUrl = ''; // 新进程会打印新 token，旧的作废
 
   try {
     // 直连路径接上 stdin 管道，控制台可往里发命令；shell 路径保持 ignore
@@ -353,8 +391,11 @@ function startDshServer() {
         env,
       });
     } else {
-      // 自定义命令：cmd /d /s /c 兼容（windowsHide 隐藏主 cmd 窗口）
-      serverChild = spawn(target.exec, ['/d', '/s', '/c', `"${target.args}"`], {
+      // 自定义命令：cmd /d /s /c 兼容（windowsHide 隐藏主 cmd 窗口）。
+      // 命令本身已带首尾引号时不再重复包一层，避免 cmd 把整串当成单个程序名报 not recognized
+      const rawCmd = Array.isArray(target.args) ? target.args.join(' ').trim() : String(target.args || '').trim();
+      const cmdLine = /^".*"$/.test(rawCmd) ? rawCmd : `"${rawCmd}"`;
+      serverChild = spawn(target.exec, ['/d', '/s', '/c', cmdLine], {
         windowsHide: true,
         detached: false,
         stdio,
@@ -418,6 +459,12 @@ function startStatusPolling() {
     notifyFallback(online ? 'online' : 'offline');
     if (online) {
       markOnboardingDone();
+      // 服务已健康在线 = 启动阶段结束：清掉启动看门狗并复位启动标记。
+      // 否则 serverStarting 会一直保持 true，180s 后看门狗把正常运行的
+      // 服务当作「卡死」杀掉——每 3 分钟死一次，桌面端反复拉起/工作台反复重载。
+      clearStallTimer();
+      serverStarting = false;
+      refreshWorkbenchUrl();
       return;
     }
     if (
@@ -429,6 +476,29 @@ function startStatusPolling() {
       startDshServer();
     }
   }, 3000);
+}
+
+// dsh 每次启动生成随机 token（只能在 stdout 里拿到），工作台必须加载这个带 token 的地址
+function currentWorkbenchUrl() {
+  return serverTokenUrl || serverUrl.toString();
+}
+
+// 把已打开的工作台刷到带 token 的真实地址：服务重启换了 token、或工作台赶在 token
+// 输出前就打开（落到普通 URL）两种情况都靠这里纠正。
+// 对比「实际下发加载的 URL」而不是 webContents.getURL()：token URL 303 后会落到
+// http://127.0.0.1:3080/（地址栏看不到 token），拿地址栏对比会误判成每次都变、无限刷新。
+// 先记账再 loadURL：否则轮询每 3 秒命中一次不匹配就硬重载，页面永不稳定。
+function refreshWorkbenchUrl() {
+  if (!workbenchWin || workbenchWin.isDestroyed()) return;
+  if (!serverTokenUrl) return; // 没有捕获到本服务 token（外部服务）就不刷
+  const target = currentWorkbenchUrl();
+  if (workbenchLoadedUrl === target) return; // 工作台已经在这个地址
+  workbenchLoadedUrl = target;
+  try {
+    workbenchWin.loadURL(target).catch(() => {});
+  } catch {
+    /* ignore */
+  }
 }
 
 // 打开 DSH 工作台：独立窗口加载服务网页，服务在线才开
@@ -458,7 +528,9 @@ async function openWorkbench() {
     workbenchWin = null;
   });
   try {
-    await workbenchWin.loadURL(serverUrl.toString());
+    const wbUrl = currentWorkbenchUrl();
+    await workbenchWin.loadURL(wbUrl);
+    workbenchLoadedUrl = wbUrl;
   } catch (err) {
     console.error('loadURL failed:', err);
     workbenchWin = null;
@@ -567,6 +639,7 @@ ipcMain.handle('get-state', async () => {
     settings: { ...settings },
     bundledVersions: null,
     serverUrl: serverUrl.toString(),
+    workbenchUrl: currentWorkbenchUrl(),
     launchDisplay: resolveLaunchTarget().display,
     versions: {
       electron: process.versions.electron,

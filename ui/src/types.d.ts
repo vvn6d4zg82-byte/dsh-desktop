@@ -13,6 +13,7 @@ export interface DshState {
   settings: DshSettings;
   bundledVersions: { dshVersion?: string } | null;
   serverUrl: string;
+  workbenchUrl: string;
   launchDisplay: string;
   versions: { electron: string; chrome: string; node: string };
   isPackaged: boolean;
