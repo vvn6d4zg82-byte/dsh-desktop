@@ -75,7 +75,8 @@ npm run dist
 
 产物：`dist/DSH-Desktop-Setup-<版本>.exe`（NSIS 一键安装器）
 
-> `npm run dist` 先 `vite build` 前端（`ui/dist`）再 electron-builder 打包，安装包轻量（~96MB），不含 dsh 依赖树。
+> `npm run dist` 先跑测试 + 样式检查 + `vite build` 前端（`ui/dist`）再 electron-builder 打包，
+> 安装包轻量（~96MB），不含 dsh 依赖树。
 > **离线构建**：打包默认复用 `node_modules/electron/dist`（`build.electronDist`），不联网下载 Electron。
 > **证书问题**：内网/代理环境遇到 `unable to verify the first certificate` 时，
 > 用系统证书信任再打包：
@@ -86,10 +87,52 @@ npm run dist
 > **安装目录名**：`@dsh-aidesktop` 由 `build/installer.nsh`（electron-builder 自动加载的自定义 NSIS 段）
 > 注入，改这个文件即可自定义目录名。
 
+## 静默自动更新
+
+应用会**在后台静默检查并下载**新版本，**不弹窗、不打断使用**；
+下载完成后，**下一次重启应用时自动生效**。
+
+- 更新源：GitHub Releases（`build.publish` 指向本仓库）
+- 首次检查在启动后 40 秒（避开 dsh 服务拉起），之后每 6 小时一轮
+- 检查 / 下载失败一律静默吞掉，绝不影响主功能
+- 状态与「检查更新 / 立即重启更新」在小齿轮设置面板里
+- 开发模式（`app.isPackaged === false`）不检查更新
+
+### 发布一个新版本
+
+1. 改 `package.json` 的 `version`（必须比线上高，否则客户端不认）
+2. 打包：
+
+   ```powershell
+   $env:NODE_OPTIONS = "--use-system-ca"
+   npm run dist
+   ```
+
+3. 上传三个文件到 Release：
+
+   ```powershell
+   $env:GH_TOKEN = "<你的 GitHub PAT>"   # 需要 repo 权限
+   npm run publish:release
+   ```
+
+   脚本会自动：校验三个文件齐全 → 校验 `latest.yml` 版本号 → 找到或创建对应 tag 的
+   Release → 上传（同名附件先删）→ 回读确认。想先演练加 `-- -DryRun`。
+
+> **`latest.yml` 必须传** —— 客户端靠它判断线上版本与 sha512 校验和，
+> 缺了它会直接报错、拉不到更新。
+>
+> **差分更新**：`.blockmap` 让客户端只下变化的部分（通常几 MB 而非 96MB）。
+> **三个文件缺一不可**：`Setup.exe` + `latest.yml` + `.exe.blockmap`，
+> 少任何一个都会退化成全量下载或直接更新失败。
+>
+> **手动上传也可以**：把上面三个文件一起拖到 GitHub Release 即可。
+> Release 不能是 draft（客户端只读已发布的 Release）。
+
 ## 技术栈
 
 - [Electron](https://www.electronjs.org/) 43
 - [electron-builder](https://www.electron.build/) 26（NSIS 一键安装器）
+- [electron-updater](https://www.electron.build/auto-update) 6（静默自动更新）
 
 ## 目录结构
 

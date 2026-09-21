@@ -1,0 +1,1294 @@
+/* ===========================================================================
+   方案 B · Primer (GitHub)（独立实现，类名前缀 p-）
+   布局骨架：GitHub 顶栏 + 左侧导航列表 + 内容区网格
+   视觉：**限定色板 = 蓝 / 绿 / 黑灰**（用户指定，不外扩其它色相，无紫）
+        - 黑灰：画布与层级。**纯中性灰（R=G=B），不带蓝调**——
+          GitHub 的 #0D1117/#161B22 偏蓝，用户明确不要深蓝，故改为中性阶：
+          #000000 终端 / #0A0A0A 画布 / #141414 次级 / #1F1F1F 浮层 /
+          #2E2E2E 边界 / #ECECEC 前景 / #9A9A9A 次前景 / #6E6E6E 最弱
+        - 蓝：主强调（品牌、主按钮/打开工作台、激活态、图标、进度条、链接）
+        - 绿：运行/成功（服务在线徽章、开关、终端字色）
+        - 红/黄仅保留为「错误/警告」语义，不做装饰
+   字体：System UI；等宽用于数据/代码；6px 圆角；1px 细线
+   =========================================================================== */
+
+.p-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  color-scheme: dark;
+  /* 缩放窗口时先露出未重绘区域，这里铺满画布色避免白块 */
+  background: var(--p-bg);
+  /* --- 黑灰：画布与层级（中性，R=G=B） --- */
+  --p-term-bg: #000000;      /* 终端视口：纯黑 */
+  --p-bg: #0a0a0a;           /* 画布 */
+  --p-bg-2: #141414;         /* 次级底：顶栏/侧栏/卡片头 */
+  --p-bg-3: #1f1f1f;         /* 浮层/控件底 */
+  --p-border: #2e2e2e;       /* 主边界线 */
+  --p-border-soft: #1f1f1f;  /* 更弱的分隔线 */
+  --p-fg: #ececec;           /* 主前景 */
+  --p-dim: #9a9a9a;          /* 次前景 */
+  --p-faint: #6e6e6e;        /* 最弱（等宽小字） */
+  /* --- 蓝：主强调（品牌、主按钮、激活态、图标、进度条、链接） --- */
+  --p-blue: #4493f8;
+  --p-blue-fg: #79c0ff;
+  --p-blue-soft: #101a26;
+  /* --- 绿：运行/成功（服务在线、开关、终端字色） --- */
+  --p-green: #3fb950;
+  --p-green-fg: #56d364;
+  --p-green-soft: #10240f;
+  /* --- 分类色阶（Categorical ramp）---
+     用途限定：**只给「一条数据属于哪个分类」上色**，目前只用在记忆地形的
+     scope（项目命名空间）上。
+
+     ⚠⚠ 本组色阶**豁免 Primer 的「限定色板」约束**（用户明确要求）⚠⚠
+       理由：这是**数据编码**，不是界面装饰 —— 和图表里的数据线同性质。
+       10+ 个分类需要 10+ 种可区分颜色，而语义色只有蓝/绿/红/黄/灰，
+       不够用；靠深浅区分又会在点云里糊成一团、认不出来。
+       因此这组颜色允许使用红/橙/紫等色相。
+
+       约束仍然生效的部分：
+         · 只允许出现在「数据着色」处（点云、图例色块、分类图例）；
+         · **不得**用于按钮、徽章、状态点、边框、背景等界面元素 ——
+           那些地方必须继续走上面的语义 token；
+         · 红/橙/黄用作分类色时，界面其它地方不得同时用它们表示错误/警告，
+           否则「红色项目」与「红线告警」会混淆。当前页面不存在这个冲突
+           （记忆地形页没有错误/警告状态展示）。
+       这条豁免是**针对分类着色**的，不是对 Primer 的全面放开。 */
+  --p-cat-1: #4493f8;  /* 蓝（同 --p-blue，第一个分类与主色一致） */
+  --p-cat-2: #57c4e0;  /* 青 */
+  --p-cat-3: #3fb950;  /* 绿 */
+  --p-cat-4: #7ee787;  /* 浅绿（终端字色，同一视觉家族） */
+  --p-cat-5: #79c0ff;  /* 浅蓝 */
+  --p-cat-6: #c678dd;  /* 紫 */
+  --p-cat-7: #d2a8ff;  /* 浅紫 */
+  --p-cat-8: #e5534b;  /* 红 */
+  --p-cat-9: #f0883e;  /* 橙 */
+  --p-cat-10: #d9a441; /* 金 */
+  --p-cat-11: #56b6c2; /* 蓝绿 */
+  --p-cat-12: #9ed072; /* 黄绿 */
+  --p-cat-13: #b0873c; /* 土黄 */
+  --p-cat-14: #8b949e; /* 中性灰（表示「其它/未归类」） */
+  --p-cat-15: #c9d1d9; /* 浅灰 */
+  --p-cat-16: #f0f6fc; /* 近白（最亮的「其它」） */
+  /* --- 语义（仅错误/警告） --- */
+  --p-red: #f85149;
+  --p-amber: #d29922;
+  /* 主强调指向蓝 */
+  --p-accent: var(--p-blue);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "Microsoft YaHei", sans-serif;
+  background: var(--p-bg);
+  color: var(--p-fg);
+}
+
+/* ---------- GitHub 顶栏 ---------- */
+.p-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  padding: 0 14px;
+  flex-shrink: 0;
+  background: var(--p-bg);
+  border-bottom: 1px solid var(--p-border);
+  user-select: none;
+  -webkit-app-region: drag;
+}
+.p-topbar * { -webkit-app-region: no-drag; }
+.p-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--p-fg);
+}
+.p-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--p-blue);
+  color: #fff;
+}
+.p-brand-path {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  color: var(--p-dim);
+}
+.p-top-sep { width: 1px; height: 18px; background: var(--p-border); }
+.p-top-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: var(--p-dim);
+}
+.p-top-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.p-theme-group {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg-2);
+}
+.p-theme-group button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--p-dim);
+  cursor: pointer;
+}
+.p-theme-group button[data-active='true'] { background: var(--p-blue); color: #fff; }
+/* GitHub 风格次要按钮 */
+.p-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+  color: var(--p-fg);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.p-btn:hover { background: var(--p-bg-3); border-color: #3a3a3a; }
+.p-btn-primary { background: var(--p-blue); border-color: var(--p-blue); color: #fff; }
+.p-btn-primary:hover { background: #2f82ef; border-color: #2f82ef; }
+.p-winctrl { display: flex; gap: 2px; margin-left: 6px; }
+.p-winbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--p-fg);
+  cursor: pointer;
+}
+.p-winbtn:hover { background: var(--p-bg-2); }
+.p-winbtn-close:hover { background: var(--p-red); color: #fff; }
+
+/* ---------- 顶栏「小齿轮」设置面板：已删除 ----------
+   原先这里是一个 320px 浮动弹层（.p-gear-*），里面重复了管理后台的功能。
+   用户指出这违反 Primer 的设计语言（设置应属于内容区，不是浮动弹层），
+   已把内容摊进管理后台页并删除该弹层。相关规则随组件一起移除。
+   下面 .p-note / .p-hint-text / .p-upd-state / .p-remote-* 是弹层里
+   仍然复用的样式，保留但已改名（不再叫 gear）。 */
+
+/* 更新状态行：文案 + 进度百分比 + 提示 */
+.p-upd-state { font-size: 12px; color: var(--p-dim); }
+.p-upd-state.online { color: var(--p-green); }
+.p-upd-state.starting { color: var(--p-amber); }
+.p-upd-state.failed { color: var(--p-red); }
+.p-upd-pct { margin-left: 6px; }
+.p-hint-text { font-size: 10.5px; color: var(--p-faint); word-break: break-all; }
+.p-note { font-size: 10.5px; line-height: 1.5; color: var(--p-faint); }
+.p-warn-text { color: var(--p-amber); }
+
+/* 远程访问的两栏卡片：推荐入口 / 完整 UI，用边框和标签区分暴露面 */
+.p-remote-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 4px 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg);
+}
+.p-remote-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--p-fg);
+}
+.p-remote-card .p-btn { align-self: flex-start; margin-top: 2px; }
+/* 暴露面标签：小胶囊，绿=小 / 红=大 */
+.p-remote-tag {
+  padding: 0 6px;
+  border-radius: 20px;
+  border: 1px solid #1f5130;
+  background: #0d2818;
+  color: var(--p-green);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.p-remote-tag-warn {
+  border-color: #5d2220;
+  background: #2d1416;
+  color: var(--p-red);
+}
+
+/* ---------------------------------------------------------------------------
+   窗口动画：从任务栏弹出 / 缩回（Steam 式）
+   由 useWindowAnim 在 .p-app 上挂类名，主进程在 minimize/restore 时驱动。
+   锚点在底部（任务栏在屏幕下方），所以位移用 translateY 向上弹。
+   只动 transform + opacity（GPU 合成，不触发重排），符合「克制」原则。
+   --------------------------------------------------------------------------- */
+.p-anim-pop {
+  animation: p-pop-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: 50% 100%;
+}
+@keyframes p-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.p-anim-shrink {
+  animation: p-shrink-out 140ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  transform-origin: 50% 100%;
+}
+@keyframes p-shrink-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(18px) scale(0.965);
+  }
+}
+
+/* 尊重系统「减少动态效果」设置 */
+@media (prefers-reduced-motion: reduce) {
+  .p-anim-pop,
+  .p-anim-shrink {
+    animation: none;
+  }
+}
+
+/* ---------- 主体：侧栏 + 内容 ----------
+   position: relative 是给右下角小组件（.p-widget）用的定位基准：
+   小组件要贴着「内容区右下角」而不是窗口右下角（否则会压住底部状态条）。 */
+.p-body { display: flex; flex: 1; min-height: 0; position: relative; }
+
+/* 左侧导航（GitHub repo 侧栏风格） */
+.p-side {
+  width: 224px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+.p-side-label {
+  padding: 4px 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--p-dim);
+  text-transform: uppercase;
+}
+.p-side-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--p-fg);
+  cursor: pointer;
+}
+.p-side-item:hover { background: var(--p-bg-3); }
+.p-side-item[data-active='true'] {
+  background: var(--p-blue-soft);
+  color: var(--p-blue-fg);
+  font-weight: 600;
+}
+.p-side-item .p-side-count {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--p-dim);
+  background: var(--p-border);
+  border-radius: 20px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+
+/* 内容区
+   注意：这里必须是 flex 纵向容器，且直接子元素（两个视图包裹 div）要撑满。
+   否则 <div hidden> 是 auto 高度 → 内部 .p-console 的 height:100% 解析成 0，
+   服务终端就只占上半部分、下面留一大片空白（"终端只占一半"的真凶）。
+   滚动策略：终端视图自己内部滚动（.p-term / .p-tree 各自 overflow:auto），
+   管理后台是纵向长内容，由 .p-admin 自己滚动。
+   所以这里必须 overflow:hidden，否则会出现双滚动条。 */
+.p-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  overflow: hidden;
+}
+/* 两个视图包裹层：常驻挂载 + CSS 显隐，显隐切换但不能丢高度 */
+.p-content > div {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.p-content > div[hidden] { display: none; }
+
+/* ---------- 管理后台：纵向长内容，自己滚动 ----------
+   管理后台由多张卡片纵向堆叠，高度会超出视口。它的包裹层是 flex 列，
+   若不开滚动，超出部分会被 .p-content 的 overflow:hidden 直接切掉
+   （症状：下面的卡片看不到、也滚不动）。
+   这里让它撑满剩余高度并内部滚动，滚动条只出现在内容区右侧。 */
+.p-admin {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* 滚动到底时留一点呼吸空间，避免最后一张卡片贴着边缘 */
+  padding-bottom: 4px;
+}
+/* .p-admin 的直接子元素是状态条 + 卡片网格：flex 列里默认会被压缩，
+   加 flex-shrink:0 让它们保持自身内容高度，超出时交给 .p-admin 滚动。 */
+.p-admin > * { flex-shrink: 0; }
+
+/* 页面标题 */
+.p-page-head { margin-bottom: 12px; }
+.p-page-title { font-size: 16px; font-weight: 600; color: var(--p-fg); }
+.p-page-desc { font-size: 12px; color: var(--p-dim); margin-top: 2px; }
+
+/* ---------- 服务终端：顶栏小卡 + 双栏 ---------- */
+.p-console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg);
+  overflow: hidden;
+}
+.p-console-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+}
+.p-console-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--p-fg);
+}
+.p-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--p-border);
+  color: var(--p-dim);
+  background: var(--p-bg);
+}
+.p-badge.online { color: var(--p-green); border-color: #1f5130; background: #0d2818; }
+.p-badge.starting, .p-badge.waiting, .p-badge.opening { color: var(--p-amber); border-color: #4d3b13; background: #2b2210; }
+.p-badge.failed, .p-badge.stalled { color: var(--p-red); border-color: #5d2220; background: #2d1416; }
+.p-badge .p-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+/* 启动中 / 打开工作台：状态点呼吸（Primer 允许的克制动画，仅透明度，不加发光） */
+.p-badge.starting .p-dot,
+.p-badge.waiting .p-dot,
+.p-badge.opening .p-dot {
+  animation: p-pulse 1.4s ease-in-out infinite;
+}
+@keyframes p-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* 不确定进度条（indeterminate）：启动/等待期间显示在终端顶部，
+   只有一条主蓝滑块来回移动，符合 GitHub 的 loading bar 语言 */
+.p-progress {
+  position: relative;
+  height: 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--p-border);
+}
+.p-progress::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: var(--p-accent);
+  border-radius: 2px;
+  animation: p-indeterminate 1.15s cubic-bezier(0.65, 0.05, 0.36, 1) infinite;
+}
+@keyframes p-indeterminate {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+
+/* 终端空态里的启动动画：三段文字依次渐显 + 旋转图标 */
+.p-term-empty .p-boot-icon { animation: p-spin 1.6s linear infinite; }
+@keyframes p-spin {
+  to { transform: rotate(360deg); }
+}
+.p-boot-step {
+  opacity: 0;
+  animation: p-fade-in 0.35s ease-out forwards;
+}
+.p-boot-step:nth-child(2) { animation-delay: 0.15s; }
+.p-boot-step:nth-child(3) { animation-delay: 0.3s; }
+.p-boot-step:nth-child(4) { animation-delay: 0.45s; }
+@keyframes p-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 尊重系统的「减少动态效果」无障碍设置 */
+@media (prefers-reduced-motion: reduce) {
+  .p-progress::before,
+  .p-badge.starting .p-dot,
+  .p-badge.waiting .p-dot,
+  .p-term-empty .p-boot-icon,
+  .p-boot-step {
+    animation: none;
+  }
+  .p-boot-step { opacity: 1; }
+}
+
+.p-console-body { display: flex; flex: 1; min-height: 0; }
+
+.p-files { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--p-border); background: var(--p-bg); }
+.p-files-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+  font-size: 11px;
+  color: var(--p-dim);
+}
+.p-files-root {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.p-minibtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--p-dim);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.p-minibtn:hover { color: var(--p-fg); background: var(--p-bg-2); border-color: var(--p-border); }
+.p-tree { flex: 1; min-height: 0; overflow: auto; padding: 6px 4px; font-size: 12.5px; line-height: 1.6; }
+.p-tree-row { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; white-space: nowrap; color: var(--p-fg); }
+.p-tree-row.folder { cursor: pointer; }
+.p-tree-row.folder:hover { background: var(--p-bg-2); }
+.p-tree-icon { color: #8a8a8a; flex-shrink: 0; }
+.p-tree-row.folder > .p-tree-icon { color: var(--p-blue); }
+.p-tree-row .size { margin-left: auto; padding-left: 8px; color: var(--p-dim); font-size: 10px; }
+.p-tree-empty { padding: 10px; color: var(--p-dim); font-size: 11px; }
+.p-divider { flex: 0 0 6px; cursor: col-resize; touch-action: none; position: relative; }
+.p-divider:hover { background: var(--p-bg-3); }
+
+/* 终端视口：比画布更深的「代码下沉」，配黑蓝主题 */
+.p-term {
+  background: var(--p-term-bg);
+  color: #7ee787;
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  border-radius: 0 0 6px 0;
+}
+.p-term .term-line-error { color: #ff7b72; }
+.p-term .term-line-warn { color: #d29922; }
+/* 启动里程碑：主进程主动播报的进度（▶ 前缀）。
+   用蓝而非终端绿，避免和普通日志糊在一起；不加粗、不发光，保持克制。 */
+.p-term .term-line-milestone { color: var(--p-blue-fg); }
+.p-term-empty { color: #3fb950; }
+
+/* 工具条 */
+.p-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+}
+
+/* ---------- 管理后台卡片（Primer 组件语言） ---------- */
+.p-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.p-card { border: 1px solid var(--p-border); border-radius: 6px; background: var(--p-bg); overflow: hidden; }
+.p-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+}
+.p-card-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--p-border);
+  background: var(--p-bg);
+  color: var(--p-blue);
+}
+.p-card-title { font-size: 13.5px; font-weight: 600; color: var(--p-fg); }
+.p-card-desc { font-size: 11.5px; color: var(--p-dim); }
+.p-card-body { padding: 12px 14px; }
+.p-key { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; color: var(--p-dim); }
+.p-value { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px; color: var(--p-fg); word-break: break-all; }
+.p-mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px; }
+.p-dim { color: var(--p-dim); }
+.p-err { color: var(--p-red); }
+
+/* Primer 语义字号阶梯（替代 Tailwind 任意值字号 text-[Npx]） */
+.p-text-2xs { font-size: 10.5px; }
+.p-text-xs { font-size: 11px; }
+.p-text-sm { font-size: 11.5px; }
+.p-text-md { font-size: 12px; }
+.p-text-lg { font-size: 13px; }
+.p-text-xl { font-size: 15px; }
+.p-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 20px;
+  border: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.p-switch[aria-checked='true'] { background: var(--p-green); border-color: var(--p-green); }
+.p-switch .p-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  /* Primer 禁止投影：用 1px 描边代替 */
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  transition: left 0.15s;
+}
+.p-switch[aria-checked='true'] .p-thumb { left: 20px; }
+
+/* GitHub 顶栏小徽章 */
+.p-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  /* Primer 禁止渐变：改用主强调色（蓝）纯色 */
+  background: var(--p-blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* 底部状态条 */
+.p-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 28px;
+  padding: 0 14px;
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: var(--p-dim);
+  border-top: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+}
+.p-statusbar .sep { width: 1px; height: 12px; background: var(--p-border); }
+
+/* —— 远程访问地址条（服务终端顶部）：显示当前有效地址，token 变化实时刷新 —— */
+.p-remote-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--p-dim);
+  background: var(--p-bg-2);
+  border-bottom: 1px solid var(--p-border);
+}
+.p-remote-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.p-remote-item .p-mono {
+  color: var(--p-fg);
+  max-width: 52ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.p-remote-sep { width: 1px; height: 14px; flex: none; background: var(--p-border); }
+.p-dot-remote {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--p-dim);
+}
+.p-dot-remote.online { background: var(--p-green); }
+.p-dot-remote.starting, .p-dot-remote.waiting, .p-dot-remote.opening { background: var(--p-amber); }
+.p-dot-remote.failed, .p-dot-remote.stalled { background: var(--p-red); }
+/* 免 key 地址以纯文本链路呈现：可点击复制，不引入链接色干扰 */
+.p-linkless {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.p-linkless:hover { text-decoration: underline; }
+.p-linkless:focus-visible { outline: 2px solid var(--p-blue); outline-offset: 1px; }
+
+/* ===========================================================================
+   以下为「控制台重排」新增段（2026-09）
+   新增的只有：卡片头动作位、设置行、数值单元、明细表、插槽栅格、图表容器、
+   右下角小组件，以及演示视图的外壳。
+   ⚠ 上面终端段（.p-console / .p-term / .p-tree / .p-files / 启动动画）**未改动**。
+   =========================================================================== */
+
+/* ---------- 卡片头右侧动作位（原 Card 没有这个位置，只能把按钮塞进 body） ---------- */
+.p-card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.p-section-label {
+  margin: 4px 0 -4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--p-faint);
+}
+
+/* ---------- 设置行：见本文件「管理后台新增段」里的 .p-set-row ----------
+   （原此处另有一份定义，与下方重复；已合并，只保留一处，避免改一处漏一处。） */
+
+/* ---------- 数值单元（.p-stat）：数值展示类界面的最小积木 ---------- */
+.p-stat-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+.p-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg);
+}
+.p-stat-label {
+  font-size: 11px;
+  color: var(--p-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 数值一律等宽：比例字体下数字宽度不一，多张卡片之间无法纵向比较 */
+.p-stat-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.p-stat-num { font-size: 20px; font-weight: 600; line-height: 1.25; color: var(--p-fg); }
+.p-stat-unit { font-size: 11px; color: var(--p-dim); }
+.p-stat-value.accent .p-stat-num { color: var(--p-blue); }
+.p-stat-value.success .p-stat-num { color: var(--p-green); }
+.p-stat-value.attention .p-stat-num { color: var(--p-amber); }
+.p-stat-value.danger .p-stat-num { color: var(--p-red); }
+.p-stat-foot { display: flex; align-items: center; gap: 6px; }
+.p-stat-delta { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10.5px; color: var(--p-dim); }
+.p-stat-delta.success { color: var(--p-green); }
+.p-stat-delta.danger { color: var(--p-red); }
+.p-stat-hint {
+  font-size: 10.5px;
+  color: var(--p-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 明细表（.p-table）：数值面板的第三段 ---------- */
+.p-table-wrap { overflow: auto; border: 1px solid var(--p-border); border-radius: 6px; }
+.p-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.p-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--p-dim);
+  background: var(--p-bg-2);
+  border-bottom: 1px solid var(--p-border);
+  white-space: nowrap;
+}
+.p-table td {
+  padding: 6px 10px;
+  color: var(--p-fg);
+  border-bottom: 1px solid var(--p-border-soft);
+  white-space: nowrap;
+}
+.p-table tbody tr:last-child td { border-bottom: 0; }
+.p-table tbody tr:hover td { background: var(--p-bg-2); }
+.p-table .is-right { text-align: right; }
+.p-table-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--p-dim);
+  border: 1px dashed var(--p-border);
+  border-radius: 6px;
+}
+
+/* ---------- 插槽（.p-slot）：预设位置 ----------
+   新演示界面的落位点。栅格固定 4 列，演示界面只声明自己占几列。 */
+.p-slot-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, 1fr);
+}
+.p-slot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg);
+  overflow: hidden;
+}
+.p-slot.span-1 { grid-column: span 1; }
+.p-slot.span-2 { grid-column: span 2; }
+.p-slot.span-3 { grid-column: span 3; }
+.p-slot.span-4, .p-slot.is-full { grid-column: 1 / -1; }
+/* 窄窗口时降级成单列，避免数值卡被压瘪 */
+@media (max-width: 900px) {
+  .p-slot.span-2, .p-slot.span-3, .p-slot.span-4 { grid-column: 1 / -1; }
+}
+.p-slot-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--p-border);
+  background: var(--p-bg-2);
+}
+.p-slot-title { font-size: 11.5px; font-weight: 600; color: var(--p-fg); }
+.p-slot-tag {
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px dashed var(--p-border);
+  border-radius: 20px;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--p-faint);
+}
+.p-slot-body { flex: 1; min-height: 0; padding: 10px; }
+.p-slot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 64px;
+  padding: 12px;
+  border: 1px dashed var(--p-border);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--p-faint);
+}
+
+/* ---------- 演示视图外壳 ----------
+   与 .p-admin 同一套滚动策略：撑满内容区、自己内部滚动。 */
+.p-demo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 4px;
+}
+.p-demo > * { flex-shrink: 0; }
+.p-view-loading { padding: 24px; font-size: 12px; color: var(--p-dim); }
+
+/* ---------- 右下角小组件（.p-widget） ----------
+   定位在内容区右下角；折叠态常驻一枚按钮，展开为浮层。
+   与托盘菜单同源（见 actions.ts），所以这里只做排版，不做业务逻辑。 */
+.p-widget { position: absolute; right: 16px; bottom: 40px; z-index: 90; }
+.p-widget-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--p-border);
+  border-radius: 20px;
+  background: var(--p-bg-2);
+  color: var(--p-fg);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.p-widget-toggle:hover { background: var(--p-bg-3); border-color: #3a3a3a; }
+.p-widget-toggle:focus-visible { outline: 2px solid var(--p-blue); outline-offset: 1px; }
+.p-widget-toggle-text { white-space: nowrap; }
+.p-widget-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 320px;
+  max-height: min(560px, calc(100vh - 120px));
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg-2);
+}
+.p-widget-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 8px;
+}
+.p-widget-title { font-size: 12px; font-weight: 600; color: var(--p-fg); }
+.p-widget-group {
+  margin: 8px 0 4px;
+  padding: 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--p-faint);
+}
+.p-widget-group:first-of-type { margin-top: 2px; }
+.p-widget-rows { display: flex; flex-direction: column; gap: 2px; }
+.p-widget-row-static { display: flex; flex-direction: column; gap: 2px; padding: 5px 8px; font-size: 12px; }
+.p-widget-key { font-size: 11px; color: var(--p-dim); }
+.p-widget-inline { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.p-widget-inline .p-mono { min-width: 0; }
+.p-widget-note { font-size: 10.5px; line-height: 1.5; color: var(--p-faint); }
+.p-widget-note.p-copied { color: var(--p-green); }
+.p-widget-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 2px 4px; }
+.p-widget-actions .p-btn { justify-content: flex-start; }
+.p-widget .p-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.p-widget-foot { margin-top: 8px; padding: 6px 4px 2px; border-top: 1px solid var(--p-border); }
+.p-widget-quit { width: 100%; justify-content: center; }
+.p-widget-quit:hover { border-color: #5d2220; color: var(--p-red); }
+
+/* ---------- 左侧导航：分组容器 + 搜索 + 页脚 ----------
+   分组由 registry/views.ts 的 group 驱动，演示界面变多时自动成组，不需要改 CSS。 */
+.p-side-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.p-side-group:last-of-type { margin-bottom: 0; }
+/* 导航行里的状态点：margin-left:auto 把它推到最右 */
+.p-side-item .p-dot-remote { margin-left: auto; }
+.p-side-search { margin-top: 4px; }
+.p-side-search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg);
+}
+.p-side-search-box:focus-within { border-color: var(--p-blue); }
+.p-side-search-input {
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 11.5px;
+  color: var(--p-fg);
+}
+.p-side-search-input::placeholder { color: var(--p-dim); }
+.p-side-foot { margin-top: auto; padding: 8px 10px 2px; }
+
+/* ---------- 内容区视图包裹层 ----------
+   原实现只有 .p-content > div 一条隐式规则；registry + ViewHost 之后
+   包裹层有了自己的类名，这里显式声明，避免以后调整骨架时又踩
+   「终端只占一半高度」那个坑（原因见 .p-content 上方注释）。 */
+.p-content-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.p-content-view[hidden] { display: none; }
+/* 终端视图需要撑满（它内部自己滚动）；演示视图也撑满（.p-demo 自己滚动） */
+.p-content-view > * { flex: 1; min-height: 0; }
+
+/* ===========================================================================
+   管理后台（.p-admin）新增段 —— 「所有设置的唯一归属地」
+   重构后本页承担了原先小齿轮弹层的全部内容，所以需要更多排版原语：
+   状态条、横向按钮行、输入行、键值信息栅格、代码块、底部危险操作区。
+   =========================================================================== */
+
+/* 顶部状态条：服务状态 + 地址 + 运行时版本 */
+.p-admin-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg-2);
+  flex-shrink: 0;
+}
+
+/* 横向排列的按钮组：自动换行，不撑破卡片 */
+.p-btn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.p-btn-row + .p-btn-row { margin-top: 8px; }
+
+/* 输入行：输入框占满剩余宽度，按钮靠右不收缩 */
+.p-input-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
+.p-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 5px 9px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg);
+  color: var(--p-fg);
+  font-size: 12px;
+  outline: none;
+}
+.p-input:focus { border-color: var(--p-blue); }
+.p-input::placeholder { color: var(--p-dim); }
+
+/* 键值信息栅格：只读信息的整齐排布 */
+.p-info-grid {
+  display: grid;
+  gap: 12px 24px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+.p-code-block {
+  padding: 8px 10px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg-2);
+  font-size: 11.5px;
+  color: var(--p-fg);
+  word-break: break-all;
+}
+
+/* 页面底部：破坏性操作单独成区，不与常规卡片混排 */
+.p-admin-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 2px 4px;
+  flex-shrink: 0;
+}
+.p-danger-btn:hover { border-color: var(--p-red); color: var(--p-red); }
+
+/* 卡片内的设置行（SettingRow，来自 ui/primitives.tsx） */
+.p-set-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--p-border-soft);
+}
+.p-set-row:last-child { border-bottom: 0; }
+.p-set-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; flex: 1; }
+.p-set-ic { color: var(--p-dim); flex-shrink: 0; margin-top: 1px; }
+.p-set-label { font-size: 12.5px; color: var(--p-fg); }
+.p-set-desc {
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--p-dim);
+}
+/* inline：右控件不收缩（开关这类窄控件靠这个保持尺寸）。
+   ⚠ 这里刻意保留 flex-shrink:0 —— 但正因如此，**控件很宽的行不能用 inline**：
+     控件会抢走整行宽度，把左侧标签列压到 0px，描述文字变成一字一行
+     （实测：输入框 min-width 200px 时，标签列宽度 = 0）。
+     宽控件（输入框、按钮组、地址）请用 layout="stacked"，见下面 .is-stacked。 */
+.p-set-ctrl { flex-shrink: 0; min-width: 0; }
+
+/* stacked：标签在上、控件在下占满整行。控件宽度不确定时用这个。 */
+.p-set-row.is-stacked { flex-direction: column; align-items: stretch; gap: 8px; }
+.p-set-row.is-stacked .p-set-main { flex: none; }
+.p-set-row.is-stacked .p-set-ctrl { flex: none; width: 100%; }
+
+/* ===========================================================================
+   记忆地形（MemoryAtlas）—— 移植自 bee/viz/memory-atlas.html
+   移植时把原页的视觉语言翻译成 Primer：
+     · 原色板是金色强调（#d9a441）+ 半透明浮层 + box-shadow；
+     · 这里改用蓝/绿/中性 token，浮层用 1px 描边代替阴影。
+   =========================================================================== */
+
+/* 数据来源声明条：占位数据必须显式说明，不能让用户以为是真的 */
+.p-atlas-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid #4d3b13;
+  border-radius: 6px;
+  background: #2b2210;
+  color: var(--p-amber);
+  font-size: 11.5px;
+}
+.p-atlas-notice .p-dim { margin-left: auto; }
+
+/* 三栏骨架：左 rail(布局) | 画布 | 右 rail(图例)。
+   高度按视口算：顶栏 48 + 内容区上下 padding 32 + 状态条 28 + 本页上方
+   （声明条 35 + 数值卡 83 + 两个 gap 32）→ 约 258，取 268 留一点余量。
+   ⚠ 这个数字与 .p-demo 上方的实际内容高度绑定：上面每加一行内容，
+     这里都要跟着调，否则画布会被挤出视口或留出空白。
+     实测值见下方注释，改布局后请重新量一遍。 */
+.p-atlas-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 240px minmax(0, 1fr) 300px;
+  align-items: stretch;
+  /* 实测：视口 900 时画布区应占 570px（.p-demo 792 - 声明条 - 数值卡 - gaps） */
+  height: calc(100vh - 330px);
+  min-height: 300px;
+}
+@media (max-width: 1100px) {
+  .p-atlas-grid { grid-template-columns: 1fr; height: auto; min-height: 0; }
+}
+/* 左右 rail 内部各自滚动，不把整页撑长 */
+.p-atlas-grid > .p-card { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.p-atlas-grid > .p-card > .p-card-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* 下方两张表（每日密度 / 明细）：属于「展开看细节」的内容，
+   不参与视口高度竞争 —— 让它们自然增高、由外层 .p-demo 滚动。
+   这样上半屏（点云 + 图例）始终可见，下半屏需要时才往下滚。 */
+.p-atlas-bottom {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .p-atlas-bottom { grid-template-columns: 1fr; }
+}
+
+/* 布局按钮：两行（标题 + 副标题），选中态用浅蓝底 + 蓝字（Primer 激活态） */
+.p-atlas-btns { display: flex; flex-direction: column; gap: 5px; }
+.p-atlas-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg-2);
+  color: var(--p-fg);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.p-atlas-btn:hover { background: var(--p-bg-3); border-color: #3a3a3a; }
+.p-atlas-btn[data-active='true'] {
+  border-color: var(--p-blue);
+  background: var(--p-blue-soft);
+  color: var(--p-blue-fg);
+  font-weight: 600;
+}
+.p-atlas-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.p-atlas-btn-sub {
+  display: block;
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  color: var(--p-dim);
+}
+.p-atlas-btn[data-active='true'] .p-atlas-btn-sub { color: var(--p-blue-fg); }
+
+/* 滑杆：Primer 风格（细轨 + 方块滑块），不用浏览器默认样式 */
+.p-atlas-range {
+  width: 100%;
+  height: 18px;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.p-atlas-range::-webkit-slider-runnable-track { height: 3px; background: var(--p-border); border-radius: 2px; }
+.p-atlas-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border-radius: 3px;
+  background: var(--p-blue);
+}
+
+/* 画布舞台：撑满所在栅格单元。
+   min-height 只在窄窗口生效（宽窗口由 .p-atlas-grid 的高度约束决定），
+   否则会把整页撑长。 */
+.p-atlas-stage { position: relative; width: 100%; height: 100%; min-height: 300px; }
+.p-atlas-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  cursor: crosshair;
+}
+.p-atlas-hint {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--p-border);
+  border-radius: 5px;
+  background: var(--p-bg-2);
+  font-size: 10.5px;
+  color: var(--p-dim);
+  pointer-events: none;
+}
+/* 悬停提示：原页用 box-shadow 抬升，Primer 改用 1px 描边 + 不透明底 */
+.p-atlas-tip {
+  position: absolute;
+  max-width: 300px;
+  padding: 7px 9px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-bg-3);
+  color: var(--p-fg);
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-all;
+  pointer-events: none;
+  z-index: 9;
+}
+.p-atlas-tip-meta {
+  margin-bottom: 4px;
+  color: var(--p-dim);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+}
+
+/* 图例：色块 + 名称 + 计数；点击高亮 */
+.p-atlas-legend { display: flex; flex-direction: column; gap: 2px; }
+.p-atlas-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--p-fg);
+  cursor: pointer;
+  text-align: left;
+}
+.p-atlas-legend-item:hover { background: var(--p-bg-3); }
+.p-atlas-legend-item[data-active='true'] { background: var(--p-blue-soft); color: var(--p-blue-fg); }
+/* 图例色块：颜色由数据决定，经 --p-swatch 自定义属性传入（见 MemoryAtlas） */
+.p-atlas-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+  background: var(--p-swatch, var(--p-dim));
+}
+.p-atlas-legend-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.p-atlas-legend-count {
+  color: var(--p-dim);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px;
+}
+
+/* 每日密度条：一行 = 日期 + 细条 + 计数 */
+.p-atlas-days { display: flex; flex-direction: column; gap: 3px; max-height: 260px; overflow-y: auto; }
+.p-atlas-day { display: flex; align-items: center; gap: 8px; font-size: 10.5px; }
+.p-atlas-day-label {
+  width: 42px;
+  flex: none;
+  color: var(--p-dim);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.p-atlas-day-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--p-border);
+  overflow: hidden;
+}
+.p-atlas-day-bar i { display: block; height: 100%; background: var(--p-blue); }
+.p-atlas-day-count {
+  width: 44px;
+  flex: none;
+  text-align: right;
+  color: var(--p-dim);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}

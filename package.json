@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "productName": "DSH Desktop",
-  "version": "0.2.0",
+  "version": "0.2.4",
   "description": "DeepSeek Harness 桌面端 — 轻量包装 DSH Web GUI",
   "main": "src/main.js",
   "repository": {
@@ -13,7 +13,10 @@
   "scripts": {
     "start": "npm run build:ui && node scripts/run-electron.js",
     "build:ui": "vite build --config ui/vite.config.ts",
-    "dist": "npm run build:ui && electron-builder --win",
+    "check:style": "node scripts/check-primer.mjs",
+    "test": "node --check src/main.js && node --check src/preload.js && node scripts/test-workbench-crash.mjs",
+    "dist": "npm run test && npm run check:style && npm run build:ui && electron-builder --win",
+    "publish:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publish-release.ps1",
     "postinstall": "node node_modules/electron/install.js"
   },
   "devDependencies": {
@@ -52,9 +55,22 @@
       "build/icon.png",
       "package.json"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "vvn6d4zg82-byte",
+        "repo": "dsh-desktop"
+      }
+    ],
+    "generateUpdatesFilesForAllChannels": true,
     "win": {
       "target": [
-        "nsis"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.png",
       "signExecutable": false
@@ -67,7 +83,11 @@
       "shortcutName": "DSH Desktop",
       "artifactName": "DSH-Desktop-Setup-${version}.exe",
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": true
+      "deleteAppDataOnUninstall": true,
+      "allowToChangeInstallationDirectory": false
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

@@ -30,6 +30,12 @@
 :root {
   --radius: 0.5rem;
   color-scheme: dark;
+  /* 兜底：--background 原本只在 .dark 下定义，而没有任何元素带 .dark 类，
+     导致 body 的 hsl(var(--background)) 解析失败 → 回退成白色。
+     缩放窗口/拖到屏幕边缘时 Chromium 会先露出未重绘区域，
+     于是出现「白色未加载块」。这里给 :root 一个真实值兜住。 */
+  --background: 0 0% 4%;
+  --foreground: 0 0% 93%;
 }
 
 .dark {
@@ -58,8 +64,20 @@
   border-color: hsl(var(--border));
 }
 
+/* html/body 必须显式给底色：窗口缩放时 Chromium 会先露出未重绘区域，
+   若这里是默认白，就会出现「白色未加载块」。与 .p-app 的画布色保持一致。 */
+html,
 body {
-  background: hsl(var(--background));
+  margin: 0;
+  padding: 0;
+  background: #0a0a0a;
+  overflow: hidden;
+  height: 100%;
+}
+
+body {
   color: hsl(var(--foreground));
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 缩放时不出现滚动条与白边 */
+  overscroll-behavior: none;
 }
